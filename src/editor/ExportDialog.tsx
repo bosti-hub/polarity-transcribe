@@ -224,8 +224,13 @@ export function ExportDialog({
   const [clean, setClean] = useState(false);
   const [anonymize, setAnonymize] = useState(true);
   const [notation, setNotation] = useNotation();
+  const [withAudio, setWithAudio] = useRemembered<boolean>("pt.exportAudio", false);
+  const [audioFormat, setAudioFormat] = useRemembered<AudioFormat>("pt.exportAudioFormat", "mp3");
   const [busy, setBusy] = useState(false);
   const context = exportContext(project, study);
+  // With the audio alongside, times count from the start of that file (it is trimmed already);
+  // without it, they match the original recording.
+  const offset = withAudio ? 0 : context.offset;
   const quoteExport = useQuoteExport(quotes, () => onOpenChange(false));
 
   const run = async () => {
@@ -233,6 +238,7 @@ export function ExportDialog({
     try {
       const result = await exportTranscript(getTranscript(), {
         ...context,
+        offset,
         format,
         timestamps,
         numbering,
@@ -244,6 +250,7 @@ export function ExportDialog({
       const path = await pickSavePath(result.fileName, result.extension);
       if (!path) return;
       await api.writeFile(path, result.bytes);
+      if (withAudio) await api.exportRecording(project.id, `${path.replace(/\.[^.\\/]+$/, "")}.${audioFormat}`);
       onOpenChange(false);
       toast(t("export.saved", { path }), "ok", { label: t("export.show"), run: () => void api.revealInFolder(path) });
     } catch (e) {
@@ -301,10 +308,32 @@ export function ExportDialog({
           notation={notation}
           onNotation={setNotation}
         />
-        {context.offset > 0.5 && (
+        {/* Not a <label>: that would hand clicks on the text to the format list instead of the switch. */}
+        <div className="flex items-center justify-between gap-3 rounded-xl bg-surface-2 px-3.5 py-3 text-sm">
+          <span className="cursor-default" onClick={() => setWithAudio(!withAudio)}>
+            {t("export.withAudio")}
+            <span className="block text-xs text-muted">{t("export.withAudioHint")}</span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2">
+            {withAudio && (
+              <Select
+                aria-label={t("quoteExport.audioFormat")}
+                value={audioFormat}
+                onChange={(e) => setAudioFormat(e.target.value as AudioFormat)}
+                className="h-8 text-[13px]"
+              >
+                <option value="mp3">MP3</option>
+                <option value="m4a">M4A (AAC)</option>
+                <option value="wav">WAV</option>
+              </Select>
+            )}
+            <Switch checked={withAudio} onChange={setWithAudio} label={t("export.withAudio")} />
+          </span>
+        </div>
+        {offset > 0.5 && (
           <p className="flex gap-2 text-xs leading-relaxed text-muted">
             <Info className="mt-0.5 size-3.5 shrink-0" />
-            {t("export.offsetNote", { time: formatClock(context.offset) })}
+            {t("export.offsetNote", { time: formatClock(offset) })}
           </p>
         )}
         {doubts > 0 && (
@@ -316,6 +345,30 @@ export function ExportDialog({
       )}
     </Dialog>
   );
+}
+
+type AudioFormat = "mp3" | "m4a" | "wav";
+
+/** A choice remembered between exports (whether the audio goes along, and in which format). */
+function useRemembered<T extends string | boolean>(key: string, fallback: T): [T, (v: T) => void] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const v = localStorage.getItem(key);
+      if (v === null) return fallback;
+      return (typeof fallback === "boolean" ? v === "1" : v) as T;
+    } catch {
+      return fallback;
+    }
+  });
+  const set = (v: T) => {
+    setValue(v);
+    try {
+      localStorage.setItem(key, typeof v === "boolean" ? (v ? "1" : "0") : v);
+    } catch {
+      // Remembering is a convenience only.
+    }
+  };
+  return [value, set];
 }
 
 export type ExportTab = "transcript" | "quotes";

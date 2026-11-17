@@ -393,7 +393,8 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         }
       }
       p.updatedAt = Date.now();
-      return p;
+      // A copy, as the real backend returns: React only re-renders for a new object.
+      return { ...p };
     }
     case "delete_project":
       projects.splice(projects.indexOf(find(id)), 1);
@@ -480,10 +481,17 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
         sync: { offset: 1.105, driftPpm: 0, windowsUsed: 30, windowsTotal: 30, jumps: 0, residualMs: 0.02 },
         bleed: { separationDb: 1.0, separable: false },
         delay: { delaysMs: [-0.625, 0.016], separationMs: 0.64, separable: true },
+        // One passage with suspiciously few words, so the notice can be seen in the browser.
+        sparse: [{ start: 96.2, end: 111.9 }],
       };
     case "copy_original":
       await sleep(300);
       return true;
+    case "system_info":
+      return "Polarity Transcribe 0.1.0 (mock)\nSystem: browser preview\nGraphics devices: none";
+    case "export_recording":
+      await sleep(300);
+      return;
     case "write_file":
     case "reveal_in_folder":
       return;

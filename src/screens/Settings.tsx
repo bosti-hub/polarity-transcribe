@@ -4,7 +4,7 @@ import { FolderOpen, Monitor, Moon, Sun, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { Frame } from "@/components/Frame";
 import { ModelManager } from "@/components/ModelManager";
-import { Button, cx, IconButton, Segmented, Select, Slider, Switch } from "@/components/ui";
+import { Button, cx, Dialog, IconButton, Segmented, Select, Slider, Switch } from "@/components/ui";
 import { api, errorMessage } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { comboLabel, isModifierOnly, isTypingKey, keyCombo, keyName } from "@/lib/keys";
@@ -202,12 +202,65 @@ export function SettingsScreen() {
                 <button className="text-accent hover:underline" onClick={() => void api.openProjectPage("issues").catch((e) => useApp.getState().toast(errorMessage(e), "error"))}>
                   {t("settings.reportProblem")}
                 </button>
+                <SystemInfo />
               </div>
             </div>
           </div>
         </Section>
       </div>
     </Frame>
+  );
+}
+
+/** "System information": the text to send along with a support question, shown before it is copied. */
+function SystemInfo() {
+  const t = useT();
+  const [text, setText] = useState<string | null>(null);
+  const open = () =>
+    api
+      .systemInfo()
+      .then(setText)
+      .catch((e) => useApp.getState().toast(errorMessage(e), "error"));
+  const copy = async () => {
+    if (text === null) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Older webviews: copy through a temporary text field.
+      const area = document.createElement("textarea");
+      area.value = text;
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+    useApp.getState().toast(t("settings.systemInfoCopied"), "ok");
+  };
+  return (
+    <>
+      <button className="text-accent hover:underline" onClick={() => void open()}>
+        {t("settings.systemInfo")}
+      </button>
+      <Dialog
+        open={text !== null}
+        onOpenChange={(o) => !o && setText(null)}
+        title={t("settings.systemInfo")}
+        description={t("settings.systemInfoHint")}
+        width={680}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setText(null)}>
+              {t("common.close")}
+            </Button>
+            <Button variant="primary" onClick={() => void copy()}>
+              {t("common.copy")}
+            </Button>
+          </>
+        }
+      >
+        <pre className="max-h-[50vh] overflow-auto rounded-xl bg-surface-2 p-3 font-mono text-[11.5px] leading-relaxed whitespace-pre-wrap select-text">{text}</pre>
+      </Dialog>
+    </>
   );
 }
 

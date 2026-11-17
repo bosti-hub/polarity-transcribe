@@ -282,10 +282,55 @@ export function selectionSpan(state: EditorState): { s: number; e: number; from:
   return Number.isFinite(s) && e > s ? { s, e, from: first, to: last } : null;
 }
 
+const WORD_CHAR = /[\p{L}\p{N}'’-]/u;
+
+/** `from`..`to` widened to whole words: a selection that starts or ends halfway through a word is a slip. */
+export function wholeWords(doc: PMNode, from: number, to: number): Range {
+  const grow = (pos: number, dir: -1 | 1) => {
+    const $pos = doc.resolve(pos);
+    const text = $pos.parent.textContent;
+    let i = $pos.parentOffset;
+    const word = (c: string | undefined) => !!c && WORD_CHAR.test(c);
+    // Only when the selection really ends inside a word: a double-click selects "word " with
+    // the space after it, which must not pull in the next word.
+    if (dir < 0 && word(text[i])) while (i > 0 && word(text[i - 1])) i--;
+    if (dir > 0 && word(text[i - 1])) while (i < text.length && word(text[i])) i++;
+    return $pos.start() + i;
+  };
+  return from === to ? { from, to } : { from: grow(from, -1), to: grow(to, 1) };
+}
+
+/** Number of sentences in a piece of text: "Ja, klopt." is one, "Ja. Dat klopt." two. */
+export function sentenceCount(text: string): number {
+  return text
+    .trim()
+    .split(/(?<=[.!?…])\s+/)
+    .filter((s) => /[\p{L}\p{N}]/u.test(s)).length;
+}
+
+/**
+ * The selected words as a short phrase, for example to start a pseudonym rule with: whole words
+ * within one turn, without the punctuation around them. Empty when nothing is selected, the
+ * selection spans turns, holds a bracketed tag or is longer than `max` words.
+ */
+export function selectedPhrase(state: EditorState, max = 5): string {
+  const { from, to } = state.selection;
+  if (from === to || state.doc.resolve(from).parent !== state.doc.resolve(to).parent) return "";
+  const r = wholeWords(state.doc, from, to);
+  const text = state.doc
+    .textBetween(r.from, r.to, " ")
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "")
+    .replace(/\s+/g, " ");
+  if (!text || /[[\]]/.test(text) || text.split(" ").length > max) return "";
+  return text;
+}
+
 // ------------------------------------------------------------------ pseudonyms in the text
 // Every match of a rule is shown as its pseudonym, in a distinct style, with the original as a
 // tooltip. The text itself is not changed (that only happens on export). When the cursor or the
-// selection touches a match, the original is shown instead, so it can be read and edited.
+// selection touches a match while the person is working in the text, the original is shown
+// instead, so it can be read and edited. While they work elsewhere (typing a new rule in the
+// panel, with the word still selected in the text), the pseudonym shows at once.
 
 export interface PseudonymRule {
   find: string;
@@ -302,10 +347,12 @@ interface PseudonymState {
   matches: Match[];
   /** The match the arrows in the panel jumped to: highlighted, but still shown as pseudonym. */
   current: Range | null;
+  /** Whether the text has the keyboard focus; only then does the selection reveal originals. */
+  focused: boolean;
   decos: DecorationSet;
 }
 
-export type PseudonymMeta = Partial<Pick<PseudonymState, "on" | "rules" | "label" | "current">>;
+export type PseudonymMeta = Partial<Pick<PseudonymState, "on" | "rules" | "label" | "current" | "focused">>;
 
 export const pseudonymKey = new PluginKey<PseudonymState>("pseudonyms");
 
@@ -344,7 +391,7 @@ function touches(m: Range, from: number, to: number): boolean {
   return from <= m.to && to >= m.from;
 }
 
-function buildPseudonyms(state: EditorState, s: Pick<PseudonymState, "on" | "matches" | "label" | "current">): DecorationSet {
+function buildPseudonyms(state: EditorState, s: Pick<PseudonymState, "on" | "matches" | "label" | "current" | "focused">): DecorationSet {
   const cur = s.current;
   const isCurrent = (m: Range) => !!cur && m.from === cur.from && m.to === cur.to;
   if (!s.on) {
@@ -355,7 +402,7 @@ function buildPseudonyms(state: EditorState, s: Pick<PseudonymState, "on" | "mat
   const { from, to } = state.selection;
   const decos: Decoration[] = [];
   for (const m of s.matches) {
-    if (!isCurrent(m) && touches(m, from, to)) {
+    if (s.focused && !isCurrent(m) && touches(m, from, to)) {
       decos.push(Decoration.inline(m.from, m.to, { class: "anon-editing" }));
       continue;
     }
@@ -392,7 +439,7 @@ function pseudonymPlugin() {
   return new Plugin<PseudonymState>({
     key: pseudonymKey,
     state: {
-      init: () => ({ on: false, rules: [], label: (t) => t, matches: [], current: null, decos: DecorationSet.empty }),
+      init: () => ({ on: false, rules: [], label: (t) => t, matches: [], current: null, focused: false, decos: DecorationSet.empty }),
       apply(tr, prev, old, state) {
         const meta = tr.getMeta(pseudonymKey) as PseudonymMeta | undefined;
         if (!meta && !tr.docChanged && !tr.selectionSet) return prev;
@@ -407,6 +454,16 @@ function pseudonymPlugin() {
     },
     props: {
       decorations: (state) => pseudonymKey.getState(state)?.decos ?? null,
+      handleDOMEvents: {
+        focus: (view) => {
+          view.dispatch(view.state.tr.setMeta(pseudonymKey, { focused: true }).setMeta("addToHistory", false));
+          return false;
+        },
+        blur: (view) => {
+          view.dispatch(view.state.tr.setMeta(pseudonymKey, { focused: false }).setMeta("addToHistory", false));
+          return false;
+        },
+      },
     },
   });
 }

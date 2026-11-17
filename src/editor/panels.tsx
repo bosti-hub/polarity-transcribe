@@ -4,7 +4,7 @@ import { ArrowUpToLine, ChevronLeft, ChevronRight, Download, Play, Plus, Quote a
 import { useState } from "react";
 import { Button, Callout, cx, IconButton, Kbd, Switch, TextInput } from "@/components/ui";
 import { useT } from "@/lib/i18n";
-import { formatDuration } from "@/lib/transcript";
+import { formatClock, formatDuration } from "@/lib/transcript";
 import type { AnonymizeRule, Quote, Speaker } from "@/lib/types";
 
 export { MOD } from "@/lib/keys";
@@ -157,6 +157,7 @@ function RuleList({
   onChange,
   onPromote,
   onJump,
+  selection,
 }: {
   rules: AnonymizeRule[];
   counts: number[];
@@ -165,9 +166,19 @@ function RuleList({
   onJump: (find: string, direction: 1 | -1) => void;
   /** Move a rule to the study list (only for interview rules in a study). */
   onPromote?: (rule: AnonymizeRule) => void;
+  /** The words selected in the text (a few at most), to start a new rule with; "" when none. */
+  selection: () => string;
 }) {
   const t = useT();
   const update = (i: number, patch: Partial<AnonymizeRule>) => onChange(rules.map((r, k) => (k === i ? { ...r, ...patch } : r)));
+  // A new rule that already has its search term: the cursor goes straight to the pseudonym.
+  const [focusReplace, setFocusReplace] = useState<number | null>(null);
+  const addRule = () => {
+    const find = selection();
+    const known = find && rules.some((r) => r.find.trim().toLowerCase() === find.toLowerCase());
+    onChange([...rules, { find: known ? "" : find, replace: "" }]);
+    setFocusReplace(find && !known ? rules.length : null);
+  };
   return (
     <div className="flex flex-col gap-2">
       {rules.map((rule, i) => (
@@ -185,7 +196,15 @@ function RuleList({
           </div>
           <div className="mt-1.5 flex items-center gap-1.5">
             <Replace className="size-3.5 shrink-0 text-muted" />
-            <TextInput value={rule.replace} onChange={(e) => update(i, { replace: e.target.value })} placeholder={t("editor.replacePlaceholder")} aria-label={t("editor.replaceWith")} className="h-8" />
+            <TextInput
+              value={rule.replace}
+              onChange={(e) => update(i, { replace: e.target.value })}
+              placeholder={t("editor.replacePlaceholder")}
+              aria-label={t("editor.replaceWith")}
+              className="h-8"
+              autoFocus={focusReplace === i}
+              onFocus={() => focusReplace === i && setFocusReplace(null)}
+            />
           </div>
           {rule.find.trim() && (
             <div className={cx("mt-1 flex items-center gap-1 pl-5 text-xs", (counts[i] ?? 0) > 0 ? "text-fg-2" : "text-muted")}>
@@ -204,7 +223,7 @@ function RuleList({
           )}
         </div>
       ))}
-      <Button variant="ghost" size="sm" className="-ml-1.5 self-start" icon={<Plus className="size-3.5" />} onClick={() => onChange([...rules, { find: "", replace: "" }])}>
+      <Button variant="ghost" size="sm" className="-ml-1.5 self-start" icon={<Plus className="size-3.5" />} onClick={addRule}>
         {t("editor.addRule")}
       </Button>
     </div>
@@ -222,6 +241,7 @@ export function AnonymizePanel({
   showInText,
   onShowInText,
   onJump,
+  selection,
 }: {
   /** Null when the interview is not in a study. */
   studyName: string | null;
@@ -235,6 +255,8 @@ export function AnonymizePanel({
   showInText: boolean;
   onShowInText: (on: boolean) => void;
   onJump: (find: string, direction: 1 | -1) => void;
+  /** The words selected in the text, to start a new rule with. */
+  selection: () => string;
 }) {
   const t = useT();
   const total = [...studyCounts, ...interviewCounts].reduce((a, b) => a + b, 0);
@@ -252,7 +274,7 @@ export function AnonymizePanel({
           <h4 className="mb-2 truncate text-xs font-semibold text-fg-2">
             {t("editor.anonStudy")}: {studyName}
           </h4>
-          <RuleList rules={studyRules} counts={studyCounts} onChange={onStudyRules} onJump={onJump} />
+          <RuleList rules={studyRules} counts={studyCounts} onChange={onStudyRules} onJump={onJump} selection={selection} />
         </section>
       )}
 
@@ -260,6 +282,7 @@ export function AnonymizePanel({
         {studyName !== null && <h4 className="mb-2 text-xs font-semibold text-fg-2">{t("editor.anonInterview")}</h4>}
         <RuleList
           onJump={onJump}
+          selection={selection}
           rules={interviewRules}
           counts={interviewCounts}
           onChange={onInterviewRules}
@@ -377,9 +400,40 @@ export interface Report {
   bleed?: { separationDb: number; separable: boolean } | null;
   delay?: { separationMs: number; separable: boolean; seatingChanges?: number } | null;
   languageSwitch?: { from: "nl" | "en"; to: "nl" | "en"; probability: number } | null;
+  /** Passages with suspiciously few recognised words (transcript timeline). */
+  sparse?: { start: number; end: number }[];
 }
 
-export function InfoPanel({ words, duration, doubts, report }: { words: number; duration: number; doubts: number; report: Report | null }) {
+/** "0:41–1:00" buttons that go to each passage with suspiciously few words. */
+export function SparseLinks({ spans, onJump }: { spans: { start: number; end: number }[]; onJump: (seconds: number) => void }) {
+  return (
+    <span className="flex flex-wrap gap-1">
+      {spans.map((s) => (
+        <button
+          key={s.start}
+          onClick={() => onJump(s.start)}
+          className="tabular rounded-md bg-surface px-1.5 py-0.5 text-xs font-medium text-accent shadow-card hover:bg-surface-3"
+        >
+          {formatClock(s.start)}–{formatClock(s.end)}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+export function InfoPanel({
+  words,
+  duration,
+  doubts,
+  report,
+  onJump,
+}: {
+  words: number;
+  duration: number;
+  doubts: number;
+  report: Report | null;
+  onJump: (seconds: number) => void;
+}) {
   const t = useT();
   const rows: [string, string][] = [
     [t("editor.duration"), formatDuration(duration)],
@@ -418,6 +472,12 @@ export function InfoPanel({ words, duration, doubts, report }: { words: number; 
             to: t(report.languageSwitch.to === "nl" ? "common.dutch" : "common.english"),
             from: t(report.languageSwitch.from === "nl" ? "common.dutch" : "common.english"),
           })}
+        </div>
+      )}
+      {report?.sparse && report.sparse.length > 0 && (
+        <div className="mt-4 flex flex-col gap-1.5 rounded-lg bg-warn-soft px-2.5 py-2 text-xs leading-relaxed text-fg">
+          <span>{t("editor.sparseText")}</span>
+          <SparseLinks spans={report.sparse} onJump={onJump} />
         </div>
       )}
       {report && (report.sync || report.method !== "none" || report.bleed) && (

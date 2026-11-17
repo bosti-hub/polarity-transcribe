@@ -44,7 +44,7 @@ import { Button, cx, IconButton, Menu, MenuItem, Segmented, Select, Spinner, Too
 import "@/editor/editor.css";
 import { InterviewDetails } from "@/components/InterviewDetails";
 import { ExportDialog, type ExportTab } from "@/editor/ExportDialog";
-import { AnonymizePanel, InfoPanel, MOD, QuotesPanel, SpeakersPanel, TagsPanel, type Report } from "@/editor/panels";
+import { AnonymizePanel, InfoPanel, MOD, QuotesPanel, SparseLinks, SpeakersPanel, TagsPanel, type Report } from "@/editor/panels";
 import { Player, type Listen, type PlayerState } from "@/editor/player";
 import {
   doubts as findDoubts,
@@ -54,11 +54,14 @@ import {
   pseudonymMatches,
   Pseudonyms,
   rangeAt,
+  selectedPhrase,
+  sentenceCount,
   selectionSpan,
   SYSTEM,
   timedRanges,
   timingAt,
   turnEnd,
+  wholeWords,
   type HighlightMeta,
   type TimedRange,
 } from "@/editor/plugins";
@@ -586,6 +589,109 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
     setSpeakerMenu(null);
   }, []);
 
+  // ---------------------------------------------------------------- words said by someone else
+  // A short reply inside another speaker's paragraph ("ja, klopt") can be given to the right
+  // speaker without starting a new paragraph: it becomes an inline "[Name: ja, klopt]", the same
+  // as the backchannels the recogniser places itself. Selecting the whole paragraph changes the
+  // paragraph's speaker instead.
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [saidByAt, setSaidByAt] = useState<{ x: number; y: number } | null>(null);
+  const [saidByMenu, setSaidByMenu] = useState<{ x: number; y: number; exclude: string } | null>(null);
+  useEffect(() => {
+    if (!editor) return;
+    const update = () => {
+      const { state, view } = editor;
+      const { from, to, empty } = state.selection;
+      const box = contentRef.current;
+      if (empty || !box || !view.hasFocus() || state.doc.resolve(from).parent !== state.doc.resolve(to).parent || !selectionSpan(state)) {
+        setSaidByAt(null);
+        return;
+      }
+      const end = view.coordsAtPos(to);
+      const r = box.getBoundingClientRect();
+      setSaidByAt({ x: Math.min(end.left - r.left, r.width - 150), y: end.bottom - r.top + 6 });
+    };
+    const hide = () => setSaidByAt(null);
+    editor.on("selectionUpdate", update);
+    editor.on("focus", update);
+    editor.on("blur", hide);
+    return () => {
+      editor.off("selectionUpdate", update);
+      editor.off("focus", update);
+      editor.off("blur", hide);
+    };
+  }, [editor]);
+
+  const assignWords = useCallback(
+    (id: string) => {
+      setSaidByMenu(null);
+      const ed = editorRef.current;
+      if (!ed) return;
+      const { state } = ed;
+      if (state.selection.empty) return;
+      let { from, to } = wholeWords(state.doc, state.selection.from, state.selection.to);
+      const $from = state.doc.resolve(from);
+      if ($from.parent !== state.doc.resolve(to).parent || $from.depth < 1) return;
+      const turn = $from.node(1);
+      const turnPos = $from.before(1);
+      while (from < to && /\s/.test(state.doc.textBetween(from, from + 1))) from++;
+      while (to > from && /\s/.test(state.doc.textBetween(to - 1, to))) to--;
+      const picked = state.doc.textBetween(from, to, " ");
+      if (!picked) return;
+      if (picked === turn.textContent.trim()) {
+        setTurnSpeaker(turnPos, id);
+        return;
+      }
+      // More than one sentence is a turn of its own, not a reply in passing: the paragraph is
+      // split around the selection, which goes to the chosen speaker; what comes before and
+      // after it stays with the paragraph's own speaker.
+      if (sentenceCount(picked) > 1) {
+        const start = $from.start();
+        const end = $from.end();
+        const space = (a: number) => /\s/.test(state.doc.textBetween(a, a + 1));
+        let tr = state.tr;
+        let after = to;
+        while (after < end && space(after)) after++;
+        if (after < end) tr = tr.delete(to, after).split(to, 1, [{ type: turn.type, attrs: { ...turn.attrs } }]);
+        let before = from;
+        while (before > start && space(before - 1)) before--;
+        if (before > start) tr = tr.delete(before, from).split(before, 1, [{ type: turn.type, attrs: { ...turn.attrs, speaker: id } }]);
+        else tr = tr.setNodeMarkup(turnPos, undefined, { ...turn.attrs, speaker: id });
+        ed.view.dispatch(tr.scrollIntoView());
+        ed.view.focus();
+        return;
+      }
+      // An inline reply that was given to the wrong person keeps its words; other bracketed
+      // notes (fillers, tags) are left out of the reply.
+      const said = (/^\[[^:\]]+: ([^\]]*)\]$/.exec(picked)?.[1] ?? picked.replace(/\[[^\]]*\]/g, " ")).replace(/\s+/g, " ").trim();
+      if (!said) return;
+      // The reply's audio: from its first to its last recognised word; typed text takes the
+      // position of the word before it.
+      let s = Infinity;
+      let e = -Infinity;
+      let before = 0;
+      state.doc.nodesBetween(0, to, (node, pos) => {
+        if (!node.isText) return;
+        const mark = node.marks.find((m) => m.type.name === "timing");
+        if (!mark) return;
+        const a = mark.attrs as TimingAttrs;
+        if (pos + node.nodeSize <= from) {
+          if (a.k !== "n") before = Math.max(before, a.e);
+        } else if (a.k === "w" || a.k === "f" || a.k === "b") {
+          s = Math.min(s, a.s);
+          e = Math.max(e, a.e);
+        }
+      });
+      if (!Number.isFinite(s)) s = e = before;
+      const name = speakersRef.current.find((x) => x.id === id)?.name ?? id;
+      const type = state.schema.marks.timing;
+      const mark = type.create({ s, e, c: 1, k: "b", sp: id } satisfies TimingAttrs);
+      ed.view.dispatch(state.tr.replaceWith(from, to, state.schema.text(`[${name}: ${said}]`, [mark])));
+      ed.view.focus();
+    },
+    [setTurnSpeaker],
+  );
+
 
   // ---------------------------------------------------------------- quotes
   const addQuote = useCallback(() => {
@@ -593,19 +699,9 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
     if (!ed) return;
     let { state } = ed;
     // Whole words only: a quote that starts or ends halfway through a word is a slip.
-    const grow = (pos: number, dir: -1 | 1) => {
-      const $pos = state.doc.resolve(pos);
-      const text = $pos.parent.textContent;
-      let i = $pos.parentOffset;
-      const word = (c: string | undefined) => !!c && /[\p{L}\p{N}'’-]/u.test(c);
-      if (dir < 0) while (i > 0 && word(text[i - 1])) i--;
-      else while (i < text.length && word(text[i])) i++;
-      return $pos.start() + i;
-    };
     if (!state.selection.empty) {
-      const from0 = grow(state.selection.from, -1);
-      const to0 = grow(state.selection.to, 1);
-      ed.view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, from0, to0)));
+      const r = wholeWords(state.doc, state.selection.from, state.selection.to);
+      ed.view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, r.from, r.to)));
       state = ed.state;
     }
     const { from, to } = state.selection;
@@ -642,6 +738,41 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
     }, 150);
     return () => window.clearTimeout(timer);
   }, [at, editor, player]);
+
+  // ---------------------------------------------------------------- passages to listen to
+  // Recognition found far fewer words than there was speech somewhere (see the pipeline's
+  // sparse check). Said once, calmly, until the person has seen it; the Info panel keeps the list.
+  const jumpTo = useCallback(
+    (seconds: number) => {
+      const ed = editorRef.current;
+      if (!ed) return;
+      player.seek(seconds);
+      const list = timedRanges(ed.state.doc);
+      const r = list[rangeAt(list, seconds, 0)];
+      if (r) {
+        ed.view.dispatch(ed.state.tr.setSelection(TextSelection.create(ed.state.doc, r.from, r.to)).scrollIntoView());
+        ed.view.focus();
+      }
+    },
+    [player],
+  );
+  const sparse = report?.sparse ?? [];
+  const sparseKey = `pt.sparseSeen.${project.id}`;
+  const [sparseSeen, setSparseSeen] = useState(() => {
+    try {
+      return localStorage.getItem(sparseKey) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const dismissSparse = () => {
+    setSparseSeen(true);
+    try {
+      localStorage.setItem(sparseKey, "1");
+    } catch {
+      // Remembering is a convenience only.
+    }
+  };
 
   // ---------------------------------------------------------------- checked up to here
   useEffect(() => {
@@ -830,7 +961,12 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
 
   return (
     <Frame
-      title={project.name}
+      title={
+        <EditableTitle
+          value={details.name}
+          onSave={(name) => void api.updateProject(project.id, { name }).then(setDetails, (e) => toast(errorMessage(e), "error"))}
+        />
+      }
       subtitle={<SaveStatus state={saveState} at={savedAt} />}
       onBack={() => void leave({ name: "home" })}
       bodyClassName="flex min-h-0 flex-1 flex-col"
@@ -932,6 +1068,18 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
           <Search className="size-4" />
         </IconButton>
       </div>
+      {sparse.length > 0 && !sparseSeen && (
+        <div className="flex shrink-0 items-start gap-3 border-b border-line bg-warn-soft px-4 py-2.5 text-[13px] leading-relaxed">
+          <Info className="mt-0.5 size-4 shrink-0 text-warn" />
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <span>{t("editor.sparseText")}</span>
+            <SparseLinks spans={sparse} onJump={jumpTo} />
+          </div>
+          <Button variant="ghost" size="sm" onClick={dismissSparse}>
+            {t("editor.sparseDismiss")}
+          </Button>
+        </div>
+      )}
       {search.open && editor && <SearchBar editor={editor} focus={search.focus} onClose={() => setSearch((s) => ({ ...s, open: false }))} />}
 
       <div className="flex min-h-0 flex-1">
@@ -942,8 +1090,27 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
           onWheel={() => (lastManualScroll.current = performance.now())}
           onPointerDown={() => (lastManualScroll.current = performance.now())}
         >
-          <div className="mx-auto max-w-[860px] px-8">
+          <div ref={contentRef} className="relative mx-auto max-w-[860px] px-8">
             <EditorContent editor={editor} />
+            {saidByAt && (
+              <Tooltip label={t("editor.saidByHint")}>
+                <button
+                  // Keeps the selection in the text: the button must not take the focus on press.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => {
+                    const ed = editorRef.current;
+                    const r = e.currentTarget.getBoundingClientRect();
+                    const exclude = ed ? ((ed.state.doc.resolve(ed.state.selection.from).node(1)?.attrs.speaker as string | undefined) ?? "") : "";
+                    setSaidByMenu({ x: r.left, y: r.bottom + 4, exclude });
+                  }}
+                  className="anim-pop absolute z-20 flex h-7 items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 text-xs font-medium text-fg-2 shadow-pop hover:bg-surface-3"
+                  style={{ left: saidByAt.x, top: saidByAt.y }}
+                >
+                  <Users className="size-3.5" />
+                  {t("editor.saidBy")}
+                </button>
+              </Tooltip>
+            )}
           </div>
         </div>
 
@@ -996,6 +1163,7 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
                 showInText={showPseudonyms}
                 onShowInText={setShowPseudonyms}
                 onJump={jumpToTerm}
+                selection={() => (editorRef.current ? selectedPhrase(editorRef.current.state) : "")}
               />
             )}
             {panel === "quotes" && (
@@ -1013,13 +1181,25 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
               />
             )}
             {panel === "details" && <InterviewDetails project={details} onChange={setDetails} compact />}
-            {panel === "info" && <InfoPanel words={stats.words} duration={transcript.duration} doubts={stats.doubts} report={report} />}
+            {panel === "info" && <InfoPanel words={stats.words} duration={transcript.duration} doubts={stats.doubts} report={report} onJump={jumpTo} />}
           </div>
         </aside>
       </div>
 
       <PlayerBar player={player} state={ps} stereo={stereo} speakers={speakers} onToggleLoop={toggleLoop} duration={ps.duration || transcript.duration} />
 
+      {saidByMenu && (
+        <SpeakerMenu
+          x={saidByMenu.x}
+          y={saidByMenu.y}
+          label={t("editor.saidBy")}
+          speakers={speakers}
+          exclude={saidByMenu.exclude}
+          onPick={assignWords}
+          onNew={() => assignWords(addSpeaker())}
+          onClose={() => setSaidByMenu(null)}
+        />
+      )}
       {speakerMenu && (
         <SpeakerMenu
           x={speakerMenu.x}
@@ -1042,6 +1222,55 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
         onTab={setExportTab}
       />
     </Frame>
+  );
+}
+
+/** The interview's name in the header: click to rename it, Enter or clicking away saves, Escape cancels. */
+function EditableTitle({ value, onSave }: { value: string; onSave: (name: string) => void }) {
+  const t = useT();
+  const [draft, setDraft] = useState<string | null>(null);
+  // Enter and Escape close the field; the blur that follows must not save a second time.
+  const closed = useRef(false);
+  if (draft === null) {
+    return (
+      <Tooltip label={t("editor.rename")}>
+        <button
+          onClick={() => {
+            closed.current = false;
+            setDraft(value);
+          }}
+          className="-mx-1 max-w-full truncate rounded-md px-1 text-left hover:bg-surface-3"
+        >
+          {value}
+        </button>
+      </Tooltip>
+    );
+  }
+  const close = (save: boolean) => {
+    if (closed.current) return;
+    closed.current = true;
+    const name = draft.trim();
+    setDraft(null);
+    if (save && name && name !== value) onSave(name);
+  };
+  return (
+    <input
+      autoFocus
+      value={draft}
+      aria-label={t("editor.rename")}
+      spellCheck={false}
+      onChange={(e) => setDraft(e.target.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={() => close(true)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") close(true);
+        else if (e.key === "Escape") close(false);
+        else return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      className="-mx-1 h-6 w-full max-w-md rounded-md border border-accent bg-surface px-1 text-[15px] font-semibold tracking-tight outline-none"
+    />
   );
 }
 
@@ -1071,14 +1300,20 @@ function SaveStatus({ state, at }: { state: SaveState; at: Date | null }) {
 function SpeakerMenu({
   x,
   y,
+  label,
   speakers,
+  exclude,
   onPick,
   onNew,
   onClose,
 }: {
   x: number;
   y: number;
+  /** Accessible name of the menu; defaults to changing the paragraph's speaker. */
+  label?: string;
   speakers: Speaker[];
+  /** A speaker not to offer (the paragraph's own); the others keep their colours. */
+  exclude?: string;
   onPick: (id: string) => void;
   onNew: () => void;
   onClose: () => void;
@@ -1105,12 +1340,12 @@ function SpeakerMenu({
   return (
     <div
       role="menu"
-      aria-label={t("editor.changeSpeaker")}
+      aria-label={label ?? t("editor.changeSpeaker")}
       className="anim-pop fixed z-50 min-w-44 rounded-xl border border-line bg-surface p-1 shadow-pop"
       style={{ left: x, top: y }}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      {speakers.map((sp, i) => (
+      {speakers.map((sp, i) => sp.id === exclude ? null : (
         <button key={sp.id} role="menuitem" onClick={() => onPick(sp.id)} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-sm hover:bg-surface-3">
           <span className="size-2.5 rounded-full" style={{ background: `var(--sp${(i % 4) + 1})` }} />
           {sp.name}

@@ -1,6 +1,7 @@
 //! Polarity Transcribe desktop shell: wires the engine (`pt-core`) to the web UI.
 
 mod commands;
+mod diagnostics;
 mod jobs;
 #[cfg(target_os = "macos")]
 mod menu;
@@ -55,8 +56,10 @@ pub fn run() {
             commands::write_file,
             commands::copy_original,
             commands::export_clip,
+            commands::export_recording,
             commands::reveal_in_folder,
             commands::open_project_page,
+            diagnostics::system_info,
             models::list_models,
             models::download_model,
             models::cancel_download,

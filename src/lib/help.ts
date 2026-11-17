@@ -41,13 +41,15 @@ export function helpSections(lang: Language): HelpSection[] {
           `${k("Alt+←")} / ${k("Alt+→")}: terug/vooruit. ${k("Alt+↓")} / ${k("Alt+↑")}: langzamer/sneller. ${k("Mod+L")}: selectie herhalen.`,
           `${k("Mod+1")}–9: notatie invoegen, zoals [lacht].`,
           "Enter splitst een beurt, Backspace aan het begin voegt samen. Klik op de sprekernaam om een beurt aan iemand anders te geven.",
+          "Zegt de ander iets korts midden in een beurt (\"ja, klopt\")? Selecteer het en kies Gezegd door…: één zin wordt [Naam: ja, klopt] in dezelfde alinea, meer zinnen worden een eigen alinea.",
+          "Klik op de naam van het interview bovenaan om die te wijzigen.",
           `Alles wordt automatisch opgeslagen. Vergissing? ${k("Mod+Z")}.`,
         ],
       },
       {
         title: "4. Pseudonimiseren",
         points: [
-          "Paneel Pseudonimiseren: vul in wat vervangen moet worden en waardoor, bijvoorbeeld Jan → [collega 1].",
+          "Paneel Pseudonimiseren: vul in wat vervangen moet worden en waardoor, bijvoorbeeld Jan → [collega 1]. Selecteer je eerst een naam in de tekst, dan staat die er bij Regel toevoegen al in.",
           "Regels van de studie gelden voor al haar interviews.",
           "Je ziet het pseudoniem meteen in de tekst; wijs het aan voor het origineel. Het origineel blijft bewaard en wordt pas bij het exporteren vervangen.",
           "De audio wordt niet gepseudonimiseerd.",
@@ -64,6 +66,7 @@ export function helpSections(lang: Language): HelpSection[] {
         title: "6. Exporteren",
         points: [
           "Exporteren (rechtsboven): Word, tekst, MAXQDA, ATLAS.ti, NVivo, REFI-QDA (.qdpx) of ondertitels.",
+          "Met Audio meeleveren komt het bijgesneden en gesynchroniseerde geluid ernaast; de tijden in het transcript lopen daar gelijk mee.",
           "Een hele studie in één keer: open de studie en kies Exporteren.",
         ],
       },
@@ -72,6 +75,12 @@ export function helpSections(lang: Language): HelpSection[] {
         points: [
           "Opnames en transcripten verlaten je computer nooit.",
           "Internet wordt alleen gebruikt om spraakmodellen te downloaden en om op updates te controleren (uit te zetten in Instellingen).",
+        ],
+      },
+      {
+        title: "Hulp nodig?",
+        points: [
+          "Instellingen > Over > Systeeminformatie: kopieer die tekst en stuur hem mee met je vraag of melding. Er staan geen opnames, transcripten of namen in, en er wordt niets verstuurd.",
         ],
       },
     ];
@@ -101,13 +110,15 @@ export function helpSections(lang: Language): HelpSection[] {
         `${k("Alt+←")} / ${k("Alt+→")}: back/forward. ${k("Alt+↓")} / ${k("Alt+↑")}: slower/faster. ${k("Mod+L")}: repeat selection.`,
         `${k("Mod+1")}–9: insert an annotation, such as [laughs].`,
         "Enter splits a turn, Backspace at its start merges. Click the speaker name to give a turn to someone else.",
+        "Does the other person say something short in the middle of a turn (\"yes, right\")? Select it and choose Said by…: one sentence becomes [Name: yes, right] in the same paragraph, more sentences become a paragraph of their own.",
+        "Click the interview's name at the top to rename it.",
         `Everything is saved automatically. Mistake? ${k("Mod+Z")}.`,
       ],
     },
     {
       title: "4. Pseudonymise",
       points: [
-        "Pseudonymise panel: enter what to replace and with what, for example John → [colleague 1].",
+        "Pseudonymise panel: enter what to replace and with what, for example John → [colleague 1]. Select a name in the text first and Add rule fills it in.",
         "A study's rules apply to all its interviews.",
         "You see the pseudonym in the text straight away; point at it for the original. The original is kept and only replaced when exporting.",
         "The audio is not pseudonymised.",
@@ -124,6 +135,7 @@ export function helpSections(lang: Language): HelpSection[] {
       title: "6. Export",
       points: [
         "Export (top right): Word, text, MAXQDA, ATLAS.ti, NVivo, REFI-QDA (.qdpx) or subtitles.",
+        "Include audio puts the trimmed and aligned sound next to it; the times in the transcript match it.",
         "A whole study at once: open the study and choose Export.",
       ],
     },
@@ -132,6 +144,12 @@ export function helpSections(lang: Language): HelpSection[] {
       points: [
         "Recordings and transcripts never leave your computer.",
         "The internet is only used to download speech models and to check for updates (can be turned off in Settings).",
+      ],
+    },
+    {
+      title: "Need help?",
+      points: [
+        "Settings > About > System information: copy that text and send it along with your question or report. It holds no recordings, transcripts or names, and nothing is sent.",
       ],
     },
   ];

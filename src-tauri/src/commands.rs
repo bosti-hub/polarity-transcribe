@@ -52,7 +52,7 @@ pub struct AppInfo {
 }
 
 /// The graphics device that would be used, and an integrated one that lost its speed race.
-fn gpu_choice(models_dir: &std::path::Path) -> (Option<pt_core::gpu::GpuDevice>, Option<String>) {
+pub(crate) fn gpu_choice(models_dir: &std::path::Path) -> (Option<pt_core::gpu::GpuDevice>, Option<String>) {
     pt_core::gpu::set_check_file(models_dir.join("gpu-check.json"));
     let picked = pt_core::gpu::pick();
     let slower = if picked.is_none() {
@@ -63,7 +63,7 @@ fn gpu_choice(models_dir: &std::path::Path) -> (Option<pt_core::gpu::GpuDevice>,
     (picked, slower)
 }
 
-fn cpu_supported() -> bool {
+pub(crate) fn cpu_supported() -> bool {
     #[cfg(target_arch = "x86_64")]
     {
         std::is_x86_feature_detected!("avx2") && std::is_x86_feature_detected!("fma") && std::is_x86_feature_detected!("f16c")
@@ -621,14 +621,56 @@ pub async fn export_clip(
     .map_err(|e| e.to_string())?
 }
 
+/// How far the beep starts before the word's recognised start, and ends before its recognised
+/// end (seconds). The recogniser's word times run slightly late: with the beep exactly on them,
+/// the start of a name was audible and the beep ran on after it (heard in a test on Windows,
+/// November 2026), so the beep is moved forward on both sides.
+const BLEEP_LEAD: f64 = 0.15;
+const BLEEP_END_EARLY: f64 = 0.02;
+
+/// Save the interview's playback audio next to an exported transcript: trimmed and, for two
+/// recordings, aligned, so the transcript's times match it when both are imported into MAXQDA,
+/// ATLAS.ti or NVivo. Two microphones are mixed into one channel (in the app each speaker has
+/// a side, which sounds odd in other programs). `dest` ends in .mp3, .m4a (AAC) or .wav.
+#[tauri::command]
+pub async fn export_recording(state: State<'_, AppState>, id: String, dest: String) -> CmdResult<()> {
+    let dir = state.store.dir(&id).map_err(err)?;
+    let source = dir.join(pt_core::pipeline::PLAYBACK_FILE);
+    if !source.is_file() {
+        return Err("this interview has no playback audio".into());
+    }
+    let to = PathBuf::from(dest);
+    let ext = to.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || -> CmdResult<()> {
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+        }
+        let mut cmd = pt_core::ffmpeg::ffmpeg_command();
+        cmd.arg("-y").arg("-i").arg(&source).args(["-vn", "-ac", "1"]);
+        match ext.as_str() {
+            "wav" => cmd.args(["-c:a", "pcm_s16le"]),
+            // 44.1 kHz: some players and analysis programs handle MP3 at the app's 16 kHz badly.
+            "mp3" => cmd.args(["-ar", "44100", "-c:a", "libmp3lame", "-b:a", "128k"]),
+            _ => cmd.args(["-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart"]),
+        };
+        let out = cmd.arg(&to).output().map_err(|e| format!("could not start FFmpeg: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("FFmpeg could not save the audio: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// A beep over each span (seconds on the interview's timeline) of a fragment that starts at
-/// `start`: a 1 kHz tone in place of the voice, a little wider than the words, as the
-/// recogniser's word times are not exact. About as loud as the voice: `loud` for the disguised
-/// voices, which are compressed to a high level. None when there is nothing to beep.
+/// `start`: a 1 kHz tone in place of the voice, moved a little forward (see `BLEEP_LEAD`). About
+/// as loud as the voice: `loud` for the disguised voices, which are compressed to a high level.
+/// None when there is nothing to beep.
 fn bleep_filter(spans: &[(f64, f64)], start: f64, end: f64, loud: bool) -> Option<String> {
     let parts: Vec<String> = spans
         .iter()
-        .map(|&(s, e)| ((s - start - 0.08).max(0.0), (e - start + 0.06).min(end - start)))
+        .map(|&(s, e)| ((s - start - BLEEP_LEAD).max(0.0), (e - start - BLEEP_END_EARLY).min(end - start)))
         .filter(|(s, e)| e > s)
         .map(|(s, e)| format!("between(t,{s:.3},{e:.3})"))
         .collect();
@@ -647,10 +689,15 @@ pub fn reveal_in_folder(path: String) -> CmdResult<()> {
         return Err("the path does not exist".into());
     }
     #[cfg(target_os = "windows")]
-    let result = if p.is_dir() {
-        std::process::Command::new("explorer").arg(p).spawn()
-    } else {
-        std::process::Command::new("explorer").arg(format!("/select,{}", p.display())).spawn()
+    let result = {
+        // Explorer reads its own command line and wants `/select,"C:\a b\c.docx"`. Rust would
+        // quote the whole argument instead ("/select,C:\a b\c.docx"), which Explorer does not
+        // understand once the path has a space in it (as "<name> - citaten" always has): it then
+        // opens the Documents folder. Backslashes only, for the same reason.
+        use std::os::windows::process::CommandExt;
+        let win = path.replace('/', "\\");
+        let arg = if p.is_dir() { format!("\"{win}\"") } else { format!("/select,\"{win}\"") };
+        std::process::Command::new("explorer").raw_arg(arg).spawn()
     };
     #[cfg(target_os = "macos")]
     let result = if p.is_dir() {
@@ -691,6 +738,6 @@ mod tests {
         assert_eq!(bleep_filter(&[], 10.0, 20.0, false), None);
         assert_eq!(bleep_filter(&[(30.0, 31.0)], 10.0, 20.0, false), None);
         let f = bleep_filter(&[(9.5, 10.5), (12.0, 12.4), (19.9, 21.0)], 10.0, 20.0, true).unwrap();
-        assert_eq!(f, "aeval=exprs='if(between(t,0.000,0.560)+between(t,1.920,2.460)+between(t,9.820,10.000),0.18*sin(2*PI*1000*t),val(ch))'");
+        assert_eq!(f, "aeval=exprs='if(between(t,0.000,0.480)+between(t,1.850,2.380)+between(t,9.750,10.000),0.18*sin(2*PI*1000*t),val(ch))'");
     }
 }

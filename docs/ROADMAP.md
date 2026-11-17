@@ -40,6 +40,8 @@ imports in the analysis programs themselves.
 - MAXQDA and ATLAS.ti: timestamps in the `#hh:mm:ss-x#` format (f4 style) at the end of each
   paragraph, so imported transcripts stay linked to the audio.
 - NVivo: Word table with time span, speaker and content columns.
+- An interview's export can include its trimmed and aligned audio (mono MP3, M4A or WAV, same name); the
+  times then count from the start of that file (done, November 2026).
 - Export a whole study at once: one file per interview, optionally with the audio, plus a
   participants table (CSV) for document or case variables.
 - REFI-QDA project exchange (`.qdpx`): one file per study with all interviews, participant
@@ -68,6 +70,11 @@ still available).
 - Dutch spell check in the editor.
 - "Checked up to here" marker with progress.
 - `[onverstaanbaar hh:mm:ss]` from uncertain stretches with one click.
+- A short reply inside the other speaker's turn ("ja, klopt") given to the right speaker as an
+  inline `[Name: ja, klopt]` ("Said by…" under a selection), and renaming an interview from the
+  editor (done, November 2026).
+- Recognition that stops early on unclear audio (far fewer words than speech) is retried with
+  beam search; what stays sparse is pointed out calmly in the editor (done, November 2026).
 
 ## 5. Transcription conventions (partly done, November 2026)
 

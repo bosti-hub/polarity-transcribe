@@ -106,6 +106,17 @@ pub struct JobReport {
     /// Set when the spoken language turned out to differ from the one chosen.
     #[serde(default)]
     pub language_switch: Option<LanguageSwitch>,
+    /// Passages where recognition found far fewer words than there was speech, even after a
+    /// second try (see [`too_sparse`]): worth listening to. Transcript timeline, in order.
+    #[serde(default)]
+    pub sparse: Vec<SparseSpan>,
+}
+
+/// A passage that yielded suspiciously few words.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SparseSpan {
+    pub start: f64,
+    pub end: f64,
 }
 
 /// The interview language was corrected after listening to the start of the recording.
@@ -180,6 +191,9 @@ struct AsrLine {
     speaker: usize,
     words: Vec<SpokenWord>,
     seconds: f64,
+    /// Still far fewer words than speech after the retry (see [`too_sparse`]).
+    #[serde(default)]
+    sparse: bool,
 }
 
 struct Reporter<'a> {
@@ -294,6 +308,32 @@ fn looks_degenerate(words: &[String]) -> bool {
         }
     }
     false
+}
+
+/// Ordinary speech gives two to three words per second; a chunk with less than this, over at
+/// least `SPARSE_MIN_SECONDS` of speech, most likely lost words. It happens with greedy decoding
+/// on unclear audio (chatter before an interview, background noise): the decoder stops after a
+/// few words. Measured on such a passage: 3 words for 15.7 s of speech on the graphics chip,
+/// where beam search found 56.
+const SPARSE_WORDS_PER_SECOND: f64 = 0.5;
+const SPARSE_MIN_SECONDS: f64 = 8.0;
+
+fn too_sparse(words: usize, speech_seconds: f64) -> bool {
+    speech_seconds >= SPARSE_MIN_SECONDS && (words as f64) < SPARSE_WORDS_PER_SECOND * speech_seconds
+}
+
+/// Sparse passages in timeline order, with touching or overlapping ones (the two speakers'
+/// streams) joined.
+fn merge_sparse(mut spans: Vec<SparseSpan>) -> Vec<SparseSpan> {
+    spans.sort_by(|a, b| a.start.total_cmp(&b.start));
+    let mut out: Vec<SparseSpan> = Vec::new();
+    for s in spans {
+        match out.last_mut() {
+            Some(last) if s.start <= last.end + 1.0 => last.end = last.end.max(s.end),
+            _ => out.push(s),
+        }
+    }
+    out
 }
 
 /// True if the output repeats a long stretch of the style prompt instead of the audio.
@@ -817,6 +857,31 @@ fn run_inner(
                     break;
                 }
             }
+            // Far fewer words than speech: try once more with beam search, which does not stop
+            // early the way greedy decoding can, and keep whichever found more.
+            let speech: f64 = chunk.pieces.iter().map(|p| p.src.len()).sum();
+            let mut sparse = !suspicious && too_sparse(out.words.len(), speech);
+            if sparse {
+                let params = AsrParams { prompt: build_prompt(lang, &glossary, None), beam_size: 5, ..base.clone() };
+                let retry = match session.transcribe(&samples, &params) {
+                    Ok(out) => out,
+                    Err(_) if cancelled() => return Ok(Outcome::Cancelled),
+                    Err(e) => return Err(e),
+                };
+                let texts: Vec<String> = retry.words.iter().map(|w| w.text.clone()).collect();
+                let usable = !looks_degenerate(&texts) && !echoes_prompt(&texts, primer);
+                eprintln!(
+                    "chunk at {:.1} s: {} words for {speech:.1} s of speech; beam search found {}{}",
+                    chunk.span().start,
+                    out.words.len(),
+                    retry.words.len(),
+                    if usable { "" } else { " (unusable)" }
+                );
+                if usable && retry.words.len() > out.words.len() {
+                    out = retry;
+                }
+                sparse = too_sparse(out.words.len(), speech);
+            }
             let words: Vec<SpokenWord> = out
                 .words
                 .iter()
@@ -829,7 +894,7 @@ fn run_inner(
                     prob: if suspicious { w.prob.min(0.2) } else { w.prob },
                 })
                 .collect();
-            let line = AsrLine { i, speaker: *speaker, words, seconds: started.elapsed().as_secs_f64() };
+            let line = AsrLine { i, speaker: *speaker, words, seconds: started.elapsed().as_secs_f64(), sparse };
             let mut json = serde_json::to_string(&line)?;
             json.push('\n');
             log.write_all(json.as_bytes())?;
@@ -857,6 +922,16 @@ fn run_inner(
     // ---- 6. Assemble ----------------------------------------------------------------------
     rep.at(Stage::Finish, 0.0);
     let asr_seconds: f64 = done.iter().flatten().map(|l| l.seconds).sum();
+    let sparse = merge_sparse(
+        done.iter()
+            .flatten()
+            .filter(|l| l.sparse)
+            .map(|l| {
+                let span = plan[l.i].chunk.span();
+                SparseSpan { start: span.start, end: span.end }
+            })
+            .collect(),
+    );
     let mut per_stream: Vec<Vec<SpokenWord>> = vec![Vec::new(); stream_spans.len()];
     for line in done.into_iter().flatten() {
         per_stream[line.speaker].extend(line.words);
@@ -912,6 +987,7 @@ fn run_inner(
             model: cfg.model_id.clone(),
             device: device_used,
             language_switch,
+            sparse,
         },
     )?;
     // The job folder holds copies of the audio; it is no longer needed.
@@ -996,6 +1072,22 @@ mod tests {
         assert_eq!(decide_language(Nl, 0.45, 0.4), None);
         // Neither language (for example German): keep it.
         assert_eq!(decide_language(Nl, 0.02, 0.03), None);
+    }
+
+    #[test]
+    fn sparse_chunks_are_recognised() {
+        assert!(too_sparse(3, 15.7));
+        assert!(!too_sparse(34, 13.9));
+        // Too short to judge: a few words in a few seconds is normal.
+        assert!(!too_sparse(1, 6.0));
+        // Slow but real speech is not flagged.
+        assert!(!too_sparse(10, 15.0));
+    }
+
+    #[test]
+    fn sparse_spans_are_ordered_and_joined() {
+        let s = |start, end| SparseSpan { start, end };
+        assert_eq!(merge_sparse(vec![s(50.0, 60.0), s(10.0, 20.0), s(20.5, 30.0)]), vec![s(10.0, 30.0), s(50.0, 60.0)]);
     }
 
     #[test]

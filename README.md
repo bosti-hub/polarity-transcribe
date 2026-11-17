@@ -13,6 +13,19 @@ anonymise and export for qualitative analysis.
 > offline. Je kunt het transcript naast de audio nakijken en verbeteren, sprekers een
 > naam geven, gegevens anonimiseren en exporteren naar onder andere Word (DOCX). De interface is
 > beschikbaar in het Nederlands en het Engels.
+>
+> **Installeren.** Download de installer van de [Releases-pagina](../../releases). De installers
+> zijn niet ondertekend met een betaald certificaat, dus je computer waarschuwt de eerste keer:
+>
+> - **Windows:** bij "Windows heeft uw pc beschermd" klik je op **Meer informatie** en dan op
+>   **Toch uitvoeren**. Je hebt geen beheerdersrechten nodig.
+> - **Mac:** sleep de app naar Programma's en open hem. Zegt macOS dat de app niet gecontroleerd
+>   kan worden, ga dan naar **Systeeminstellingen > Privacy en beveiliging**, scrol naar beneden
+>   en kies daar om de app toch te openen. Daarna onthoudt macOS je keuze. Meer opties staan
+>   hieronder bij [Installing](#installing).
+>
+> **Hulp nodig?** In de app: **Instellingen > Over > Systeeminformatie**. Kopieer die tekst en
+> stuur hem mee met je vraag; er staan geen opnames, transcripten of namen in.
 
 > **Status.** Version 0.1 is an early release. It has been tested end to end on Windows 11. The
 > macOS build and the release pipeline have not been run yet; expect rough edges there.
@@ -98,6 +111,9 @@ The app chooses the most reliable method the recording allows, and tells you whi
   `[onverstaanbaar]` replaces the selected words and records the time, for example
   `[onverstaanbaar 12:31]`.
 - Split a turn with Enter, merge it with the previous one with Backspace.
+- Give a short reply inside the other speaker's turn to the right person ("Said by…" under a
+  selection): one sentence becomes `[R01: yes, right]` in the same paragraph, more sentences
+  become a paragraph of their own.
 - Find and replace (Ctrl+F), optionally whole words only.
 - "Checked up to here" marker with a percentage, so you know where you stopped.
 - Optional spell check.
@@ -118,7 +134,9 @@ The app chooses the most reliable method the recording allows, and tells you whi
   Jefferson/GAT `(3.5)`.
 - For analysis software: MAXQDA and ATLAS.ti (Word with `#00:12:31-4#` timestamps) and NVivo
   (Word table with time spans), so the transcript stays linked to the recording after import.
-  Times follow the original recording file, also when you transcribed only part of it.
+  Times follow the original recording file, also when you transcribed only part of it. Or
+  include the audio (MP3, M4A or WAV, trimmed and with two recordings aligned) next to the
+  transcript; the times then match that file.
 - A whole study at once: one file per interview, the participants table, copies of the original
   recordings and a REFI-QDA project (`.qdpx`) that opens the study in ATLAS.ti, MAXQDA, NVivo and
   other programs (interviews, participants with attributes, tags as groups, annotations as codes).
@@ -261,6 +279,15 @@ with an AMD Ryzen 7 7700 and an NVIDIA RTX 5060 Ti:
 - Automatic transcription makes mistakes, especially with names, jargon, accents, overlapping
   speech and poor recordings. **Always proofread the transcript against the audio** before you use
   it in your research.
+
+## Something not working?
+
+Open **Settings > About > System information**. It shows a description of your computer and the
+app (versions, processor, memory, graphics chips and how fast they turned out, models, FFmpeg,
+the figures of your most recent transcriptions and any error messages). Interview names, file
+names and folders are replaced, and recordings and transcripts are not in it. Nothing is sent:
+click **Copy** and paste it into your question or into a
+[problem report](../../issues).
 
 ## Building from source
 

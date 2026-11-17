@@ -90,8 +90,12 @@ export const api = {
   exportClip: (id: string, start: number, end: number, dest: string, voice: "tv" | "whisper" | null, bleeps: [number, number][] = []) =>
     invoke<void>("export_clip", { id, start, end, dest, voice, bleeps }),
   openProjectPage: (page: "home" | "issues" | "license") => invoke<void>("open_project_page", { page }),
+  /** A description of this computer and the app for support, without research data. */
+  systemInfo: () => invoke<string>("system_info"),
   /** Copy an interview's original recording to `dest`; false when the original no longer exists. */
   copyOriginal: (id: string, dest: string) => invoke<boolean>("copy_original", { id, dest }),
+  /** Save the interview's playback audio (trimmed, aligned, mono) at `dest` (.mp3, .m4a or .wav). */
+  exportRecording: (id: string, dest: string) => invoke<void>("export_recording", { id, dest }),
 };
 
 /** URL the webview can load for a file inside a project folder. */
