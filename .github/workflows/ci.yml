@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14] # macos-14 = Apple Silicon (arm64)
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # Windows runners convert LF to CRLF on checkout by default, which breaks shell scripts.
+      - name: Keep LF line endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+
+      # Windows-only build flags for whisper.cpp (mirrors .cargo/config.example.toml).
+      # cmake-rs strips MSVC /O flags; cl.exe prepends the CL variable, which restores them.
+      # GGML_* pin a portable x86-64 baseline (AVX2/FMA/F16C, ~2013+) instead of the runner's CPU.
+      # whisper-rs-sys forwards GGML_* environment variables to CMake.
+      # Written to GITHUB_ENV so they apply to every later step of this job, on Windows only.
+      - name: Configure Windows build environment
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          {
+            echo "CL=/O2 /Ob2 /DNDEBUG"
+            echo "GGML_NATIVE=OFF"
+            echo "GGML_AVX=ON"
+            echo "GGML_AVX2=ON"
+            echo "GGML_FMA=ON"
+            echo "GGML_F16C=ON"
+            echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Separate caches per OS; the whisper.cpp CMake build is the expensive part.
+          key: ci
+
+      - name: Typecheck frontend
+        run: npm run typecheck
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Engine tests
+        run: cargo test -p pt-core --locked
+
+      # tauri::generate_context! requires frontendDist (../dist) to exist at compile time.
+      # An empty directory is enough for a check; the real frontend build happens in release.yml.
+      - name: Create placeholder dist/
+        shell: bash
+        run: mkdir -p dist
+
+      - name: Check app crate
+        run: cargo check -p polarity-transcribe --locked

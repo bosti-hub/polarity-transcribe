@@ -1,0 +1,22 @@
+[package]
+name = "pt-core"
+description = "Polarity Transcribe engine: audio decoding, sync, speaker activity, transcription"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+vulkan = ["whisper-rs/vulkan"]
+metal = ["whisper-rs/metal"]
+cuda = ["whisper-rs/cuda"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+whisper-rs = { version = "0.16", features = ["raw-api"] }
+uuid = { version = "1", features = ["v4"] }
+rustfft = "6"
+sha2 = "0.10"
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-native", "copy-dylibs", "api-31"] }

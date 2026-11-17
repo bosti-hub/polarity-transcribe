@@ -1,0 +1,21 @@
+# Sensitive / large local data — never commit
+test-audio/
+models/
+bench-out/
+*.pcm
+
+# Build output
+target/
+node_modules/
+dist/
+src-tauri/gen/
+src-tauri/binaries/
+src-tauri/runtime/
+
+# Local machine config
+.cargo/config.toml
+.env
+.DS_Store
+Thumbs.db
+*.log
+.tools/

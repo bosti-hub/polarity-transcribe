@@ -1,0 +1,200 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/*
+ * Design tokens. Components only use the semantic colours below (bg-surface, text-fg, …),
+ * so light and dark themes stay in sync automatically.
+ */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --surface-3: #e7eaef;
+  --line: #e2e5ea;
+  --line-strong: #cfd4dc;
+  --fg: #171a1f;
+  --fg-2: #4a5160;
+  --muted: #7b8494;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef0ff;
+  --accent-fg: #ffffff;
+  --danger: #dc2626;
+  --danger-soft: #fef1f1;
+  --warn: #b45309;
+  --warn-soft: #fff6e5;
+  --ok: #15803d;
+  --ok-soft: #ecfdf3;
+  /* Transcript */
+  --doubt: #f59e0b;
+  --doubt-soft: #fff3d6;
+  --play: #dfe3ff;
+  --tag: #0f766e;
+  --tag-soft: #e6f6f4;
+  --filler: #8b93a3;
+  /* Speakers */
+  --sp1: #4f46e5;
+  --sp2: #0d9488;
+  --sp3: #c2410c;
+  --sp4: #a21caf;
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.06);
+  --shadow-md: 0 4px 16px rgb(16 24 40 / 0.08), 0 1px 3px rgb(16 24 40 / 0.06);
+  --shadow-lg: 0 16px 48px rgb(16 24 40 / 0.16), 0 2px 8px rgb(16 24 40 / 0.08);
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg: #111318;
+  --surface: #191c23;
+  --surface-2: #20242d;
+  --surface-3: #2a2f3a;
+  --line: #2a2f3a;
+  --line-strong: #3a4150;
+  --fg: #eceef2;
+  --fg-2: #b6bcc8;
+  --muted: #8a92a3;
+  --accent: #7c83ff;
+  --accent-hover: #9197ff;
+  --accent-soft: #23264a;
+  --accent-fg: #0d0f1a;
+  --danger: #f87171;
+  --danger-soft: #3a1c1f;
+  --warn: #fbbf24;
+  --warn-soft: #3a2e12;
+  --ok: #4ade80;
+  --ok-soft: #14301f;
+  --doubt: #fbbf24;
+  --doubt-soft: #40330f;
+  --play: #2c3170;
+  --tag: #5eead4;
+  --tag-soft: #12302d;
+  --filler: #8a92a3;
+  --sp1: #8f95ff;
+  --sp2: #2dd4bf;
+  --sp3: #fb923c;
+  --sp4: #e879f9;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 4px 16px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 16px 48px rgb(0 0 0 / 0.5);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-doubt: var(--doubt);
+  --color-doubt-soft: var(--doubt-soft);
+  --color-tag: var(--tag);
+  --color-tag-soft: var(--tag-soft);
+  --shadow-card: var(--shadow-sm);
+  --shadow-pop: var(--shadow-md);
+  --shadow-modal: var(--shadow-lg);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss03";
+  overflow: hidden;
+  user-select: none;
+  cursor: default;
+}
+
+input,
+textarea,
+[contenteditable="true"],
+.selectable {
+  user-select: text;
+  cursor: auto;
+}
+
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The tag field's own box shows focus; its text input and suggestion arrow stay plain. */
+.tag-input:focus-visible {
+  outline: none;
+}
+.tag-input::-webkit-calendar-picker-indicator {
+  display: none !important;
+}
+
+/* Thin, unobtrusive scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.anim-pop {
+  animation: pop-in 0.14s ease-out;
+}
+.anim-fade {
+  animation: fade-in 0.14s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

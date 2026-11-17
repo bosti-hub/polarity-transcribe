@@ -1,0 +1,7 @@
+# Store text with LF line endings so Windows and macOS builds see the same files.
+* text=auto eol=lf
+*.sh text eol=lf
+*.bin binary
+*.icns binary
+*.ico binary
+*.png binary

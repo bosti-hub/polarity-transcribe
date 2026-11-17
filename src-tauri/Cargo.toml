@@ -1,0 +1,32 @@
+[package]
+name = "polarity-transcribe"
+description = "Offline verbatim interview transcription for qualitative research"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "polarity_transcribe_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = []
+vulkan = ["pt-core/vulkan"]
+metal = ["pt-core/metal"]
+cuda = ["pt-core/cuda"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+pt-core = { path = "../crates/core" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls"] }
+keepawake = "0.6"
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
+tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls"] }
+tauri-plugin-process = "2"

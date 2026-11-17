@@ -1,0 +1,20 @@
+# Template for the local build environment on Windows.
+# Copy this file to .cargo/config.toml (which is gitignored) and adjust the two paths.
+# Nothing here is needed on macOS; do not copy the GGML_* lines there.
+[env]
+# Only needed when cmake.exe is not on PATH. Visual Studio Build Tools ship one here:
+CMAKE = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2022\\BuildTools\\Common7\\IDE\\CommonExtensions\\Microsoft\\CMake\\CMake\\bin\\cmake.exe"
+# Folder that contains libclang.dll (needed by bindgen for whisper.cpp).
+# With LLVM installed:              C:\\Program Files\\LLVM\\bin
+# With `pip install --target .tools/libclang libclang`:  <repo>\\.tools\\libclang\\clang\\native
+LIBCLANG_PATH = "C:\\Program Files\\LLVM\\bin"
+# cmake-rs replaces CMake's per-config MSVC flags and strips every /O flag, which leaves
+# whisper.cpp unoptimised (10-50x slower). cl.exe prepends the CL variable to its command line,
+# so this puts the optimisation flags back.
+CL = "/O2 /Ob2 /DNDEBUG"
+# Portable x86-64 baseline (Haswell, 2013+) instead of "whatever the build machine has".
+GGML_NATIVE = "OFF"
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_FMA = "ON"
+GGML_F16C = "ON"

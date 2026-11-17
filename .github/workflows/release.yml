@@ -1,0 +1,213 @@
+name: Release
+
+# Builds the Windows (NSIS) and macOS Apple Silicon (DMG) installers and attaches them to a
+# DRAFT GitHub Release. Review the draft and publish it by hand.
+#
+# Tag convention: the tag must be "v" + the version in the root Cargo.toml ([workspace.package],
+# e.g. v0.1.0), because tauri-action names the release from that version (tagName: v__VERSION__).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      windows_cpu_only:
+        description: "Windows: build without Vulkan GPU support (fallback if the Vulkan build breaks)"
+        type: boolean
+        default: false
+
+# Least privilege: nothing by default; the build job only needs to create/upload the release.
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    permissions:
+      contents: write # create the draft release and upload assets
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows uses Vulkan when the PC has a dedicated graphics card and the processor
+          # otherwise; a PC without the Vulkan loader also works (see crates/core/src/gpu.rs).
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            features: vulkan
+            bundles: nsis
+          - os: macos-14 # Apple Silicon
+            target: aarch64-apple-darwin
+            features: metal
+            # "app" produces the .app.tar.gz the in-app updater installs.
+            bundles: app,dmg
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # Windows runners convert LF to CRLF on checkout by default, which breaks the bash script.
+      - name: Keep LF line endings
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+
+      # --- Build environment -------------------------------------------------------------------
+
+      # See ci.yml: restore MSVC optimisation flags stripped by cmake-rs and pin a portable
+      # x86-64 baseline for ggml. Not set on macOS (arm64 must not get x86 flags).
+      - name: Configure Windows build environment
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          {
+            echo "CL=/O2 /Ob2 /DNDEBUG"
+            echo "GGML_NATIVE=OFF"
+            echo "GGML_AVX=ON"
+            echo "GGML_AVX2=ON"
+            echo "GGML_FMA=ON"
+            echo "GGML_F16C=ON"
+            echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin"
+            # whisper.cpp's Vulkan shader generator nests deeply; under the default
+            # D:\a\<repo>\<repo>\target its paths exceed Windows' 260-character limit.
+            echo "CARGO_TARGET_DIR=C:\\t"
+          } >> "$GITHUB_ENV"
+
+      - name: Configure macOS build environment
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo "MACOSX_DEPLOYMENT_TARGET=13.3" >> "$GITHUB_ENV"
+
+      # Which cargo features and which Tauri config files this build uses.
+      - name: Decide build flavour
+        id: flavour
+        shell: bash
+        run: |
+          features="${{ matrix.features }}"
+          if [ "$RUNNER_OS" = "Windows" ] && [ "${{ inputs.windows_cpu_only }}" = "true" ]; then features=""; fi
+          args="--target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json"
+          if [ "$RUNNER_OS" = "Windows" ]; then args="$args --config src-tauri/tauri.release.windows.conf.json"; fi
+          if [ -n "$features" ]; then args="$args --features $features"; fi
+          echo "features=$features" >> "$GITHUB_OUTPUT"
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+          echo "features: '${features}'"; echo "tauri args: ${args}"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      # Vulkan SDK (headers, loader import library and glslc) is needed to compile the ggml
+      # Vulkan backend. 1.4.363.1 is the version the Vulkan build was tested with locally.
+      # NOTE: re-verify that this action is still maintained before relying on it
+      # (alternative: humbletim/install-vulkan-sdk).
+      - name: Install Vulkan SDK
+        if: steps.flavour.outputs.features == 'vulkan'
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.363.1
+          optional_components: com.lunarg.vulkan.vma
+          install_runtime: false
+          cache: true
+          stripdown: true
+
+      # --- FFmpeg sidecar ----------------------------------------------------------------------
+
+      # Cached on the build script's hash: changing the FFmpeg version or configuration in the
+      # script invalidates the cache automatically.
+      - name: Restore FFmpeg sidecar
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/binaries
+          key: ffmpeg-${{ matrix.target }}-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+
+      - name: Set up MSYS2 (FFmpeg toolchain)
+        if: runner.os == 'Windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            make
+            diffutils
+            tar
+            curl
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-nasm
+
+      - name: Build FFmpeg sidecar (Windows)
+        if: runner.os == 'Windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: ./scripts/build-ffmpeg.sh ${{ matrix.target }}
+
+      - name: Build FFmpeg sidecar (macOS)
+        if: runner.os == 'macOS' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: ./scripts/build-ffmpeg.sh ${{ matrix.target }}
+
+      - name: Check FFmpeg sidecar
+        shell: bash
+        run: |
+          ls -l src-tauri/binaries/
+          bin="src-tauri/binaries/ffmpeg-${{ matrix.target }}"
+          [ "$RUNNER_OS" = "Windows" ] && bin="$bin.exe"
+          "$bin" -hide_banner -version | head -n 1
+
+      # --- Windows runtime DLLs ----------------------------------------------------------------
+
+      # The installer ships DirectML.dll and the Visual C++ runtime next to the exe, so the app
+      # starts on a laptop without any developer tools (see scripts/collect-runtime.mjs).
+      # Building the engine first puts DirectML.dll in the target folder; the app build below
+      # reuses everything compiled here.
+      - name: Collect Windows runtime DLLs
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          features="${{ steps.flavour.outputs.features }}"
+          cargo build --release --locked --target ${{ matrix.target }} -p pt-core ${features:+--features "$features"}
+          node scripts/collect-runtime.mjs ${{ matrix.target }}
+
+      # --- App build and draft release ---------------------------------------------------------
+
+      # tauri-action runs `npm run tauri build`, which runs beforeBuildCommand (npm run build)
+      # first. The release configs merge in the FFmpeg sidecar (externalBin), the macOS ad-hoc
+      # signing identity, the update packages and, on Windows, the runtime DLLs. No code signing
+      # certificates are used.
+      - name: Build and upload installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update packages (not a code-signing certificate; free). The app only
+          # installs updates signed with this key; its public half is in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: npm run tauri
+          args: ${{ steps.flavour.outputs.args }}
+          tagName: v__VERSION__
+          releaseName: Polarity Transcribe v__VERSION__
+          releaseBody: |
+            Installers for Windows x64 and macOS on Apple Silicon.
+
+            These builds are not code-signed. Windows SmartScreen and macOS Gatekeeper will warn on
+            first launch; see the README for how to open the app anyway.
+
+            AI models are not included; the app downloads them on first run and then works offline.
+          # latest.json tells installed apps about this version. It only takes effect once the
+          # draft is published: the app reads releases/latest, which ignores drafts.
+          includeUpdaterJson: true
+          releaseDraft: true
+          prerelease: false
