@@ -7,7 +7,7 @@ import { ModelManager } from "@/components/ModelManager";
 import { Button, cx, IconButton, Segmented, Select, Slider, Switch } from "@/components/ui";
 import { api, errorMessage } from "@/lib/api";
 import { useT } from "@/lib/i18n";
-import { comboLabel, isModifierOnly, isTypingKey, keyCombo } from "@/lib/keys";
+import { comboLabel, isModifierOnly, isTypingKey, keyCombo, keyName } from "@/lib/keys";
 import { useApp } from "@/lib/store";
 import type { Language, Settings } from "@/lib/types";
 import { useUpdates } from "@/lib/updates";
@@ -54,7 +54,7 @@ export function SettingsScreen() {
   };
 
   return (
-    <Frame title={t("settings.title")} onBack={() => go({ name: "home" })}>
+    <Frame title={t("settings.title")} onBack={() => useApp.getState().goBack()}>
       <div className="mx-auto flex w-full max-w-[720px] flex-col gap-9 px-6 pt-8 pb-16">
         <Section title={t("settings.general")}>
           <Row label={t("settings.uiLanguage")}>
@@ -89,7 +89,7 @@ export function SettingsScreen() {
             </Select>
           </Row>
           <div className="px-5 py-4">
-            <div className="text-xs leading-relaxed text-muted">{t("settings.keysHint")}</div>
+            <div className="text-xs leading-relaxed text-muted">{t("settings.keysHint", { alt: keyName("Alt") })}</div>
             <div className="mt-3 flex flex-col gap-2.5">
               <KeyRow label={t("settings.keyPlayPause")} value={settings.keyPlayPause} onChange={(v) => update({ keyPlayPause: v })} />
               <KeyRow label={t("settings.keyBack")} value={settings.keyBack} onChange={(v) => update({ keyBack: v })} />
@@ -175,6 +175,15 @@ export function SettingsScreen() {
           </Row>
         </Section>
 
+        <Section title={t("help.title")}>
+          <div className="flex items-center justify-between gap-4 p-5">
+            <span className="text-[13px] text-fg-2">{t("settings.helpHint")}</span>
+            <Button size="sm" variant="secondary" onClick={() => useApp.getState().go({ name: "help" })}>
+              {t("settings.openHelp")}
+            </Button>
+          </div>
+        </Section>
+
         <Section title={t("settings.about")}>
           <div className="flex items-center gap-4 p-5">
             <LogoMark className="size-10" />
@@ -184,6 +193,15 @@ export function SettingsScreen() {
                 {info ? t("settings.version", { v: info.version }) : null}
                 {info && " · "}
                 {t("settings.license")}
+              </div>
+              <div className="mt-0.5 text-xs text-muted">© 2026 Floris Bos · OnPolarity.com</div>
+              <div className="mt-1.5 flex gap-3 text-xs">
+                <button className="text-accent hover:underline" onClick={() => void api.openProjectPage("home").catch((e) => useApp.getState().toast(errorMessage(e), "error"))}>
+                  {t("settings.sourceCode")}
+                </button>
+                <button className="text-accent hover:underline" onClick={() => void api.openProjectPage("issues").catch((e) => useApp.getState().toast(errorMessage(e), "error"))}>
+                  {t("settings.reportProblem")}
+                </button>
               </div>
             </div>
           </div>

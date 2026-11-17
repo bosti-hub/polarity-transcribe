@@ -1,12 +1,13 @@
 import { AlertCircle, CheckCircle2, Info, X } from "lucide-react";
 import { useEffect } from "react";
 import { cx, Spinner, TooltipProvider } from "./components/ui";
-import { errorMessage } from "./lib/api";
+import { errorMessage, events } from "./lib/api";
 import { useApp } from "./lib/store";
 import { Editor } from "./screens/Editor";
 import { Home } from "./screens/Home";
 import { ProgressScreen } from "./screens/Progress";
 import { SettingsScreen } from "./screens/Settings";
+import { HelpScreen } from "./screens/Help";
 import { Setup } from "./screens/Setup";
 import { Welcome } from "./screens/Welcome";
 
@@ -76,6 +77,17 @@ export function App() {
     document.documentElement.lang = lang;
   }, [lang]);
 
+  // The macOS menu bar: Help > Manual and the app menu's Settings.
+  useEffect(() => {
+    const un = events.menu((id) => {
+      const { go, settings } = useApp.getState();
+      if (!settings.onboarded) return;
+      if (id === "help") go({ name: "help" });
+      else if (id === "settings") go({ name: "settings" });
+    });
+    return () => void un.then((f) => f());
+  }, []);
+
   // The webview's own context menu and file-drop navigation make no sense in a desktop app.
   useEffect(() => {
     const prevent = (e: Event) => e.preventDefault();
@@ -112,6 +124,9 @@ export function App() {
         break;
       case "settings":
         screen = <SettingsScreen />;
+        break;
+      case "help":
+        screen = <HelpScreen />;
         break;
     }
   }

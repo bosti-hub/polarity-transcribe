@@ -31,7 +31,11 @@ function LanguagePicker({ value, onChange }: { value: Language; onChange: (l: La
   );
 }
 
-export function NewStudyDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+/**
+ * Create a study. Without `onCreated` the library opens the new study; with it (for example from
+ * an interview's details) the caller decides what happens next and the screen stays put.
+ */
+export function NewStudyDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated?: (study: Study) => void }) {
   const t = useT();
   const uiLanguage = useApp((s) => s.settings.uiLanguage);
   // Interviews are usually in the language of the previous one, not necessarily the app's.
@@ -68,7 +72,8 @@ export function NewStudyDialog({ open, onClose }: { open: boolean; onClose: () =
       }
       const { putStudy, showLibrary, refreshStudies } = useApp.getState();
       putStudy(study);
-      showLibrary(study.id);
+      if (onCreated) onCreated(study);
+      else showLibrary(study.id);
       void refreshStudies();
       onClose();
     } catch (err) {

@@ -278,6 +278,8 @@ export interface AnonymizeRule {
 export interface ProjectExtras {
   anonymize: AnonymizeRule[];
   customTags: string[];
+  /** Built-in labels removed from this interview's list. */
+  hiddenTags?: string[];
   /** Transcript time (seconds) up to which the text has been checked against the audio. */
   reviewedUntil?: number | null;
   /** Passages saved as quotes. */

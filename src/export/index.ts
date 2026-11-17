@@ -6,9 +6,9 @@ import { isoDate, sanitizeFileName, type InterviewMeta } from "./common";
 import { toDocx } from "./docx";
 import { toNvivoDocx, toQdaDocx } from "./qda";
 import { toSrt, toVtt } from "./srt";
-import { toMarkdown, toTxt } from "./text";
+import { toMarkdown, toTxt, toCsv } from "./text";
 
-export type ExportFormat = "docx" | "maxqda" | "nvivo" | "txt" | "md" | "srt" | "vtt" | "json";
+export type ExportFormat = "docx" | "maxqda" | "nvivo" | "txt" | "md" | "csv" | "srt" | "vtt" | "json";
 
 /** File extension per format. */
 export const EXTENSION: Record<ExportFormat, string> = {
@@ -17,6 +17,7 @@ export const EXTENSION: Record<ExportFormat, string> = {
   nvivo: "docx",
   txt: "txt",
   md: "md",
+  csv: "csv",
   srt: "srt",
   vtt: "vtt",
   json: "json",
@@ -117,6 +118,8 @@ async function render(source: Transcript, options: ExportOptions): Promise<Uint8
       return encoder.encode(toTxt(transcript, options));
     case "md":
       return encoder.encode(toMarkdown(transcript, options));
+    case "csv":
+      return encoder.encode(toCsv(transcript, options));
     case "srt":
       return encoder.encode(toSrt(transcript));
     case "vtt":

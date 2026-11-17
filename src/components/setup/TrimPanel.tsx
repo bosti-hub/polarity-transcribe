@@ -212,72 +212,86 @@ export function TrimPanel({ project, model }: { project: Project; model: Timelin
     model.setLinked(canLink && linked);
   }, [model, canLink, linked]);
 
-  const rows: WaveformRow[] = tracks.map((tr) => {
+  const [muted, setMuted] = useState<boolean[]>([]);
+  const rows: WaveformRow[] = tracks.map((tr, i) => {
     const s = project.sources[tr.slot];
     return {
       label: t("setup.track", { n: tr.slot + 1 }),
       detail: s?.fileName,
       color: splitStereo ? "--sp1" : tr.slot === 0 ? "--sp1" : "--sp2",
       lanes: tr.lanes.length,
+      // With two recordings both play together; each can be muted.
+      muted: tracks.length > 1 ? !!muted[i] : undefined,
+      onMute: tracks.length > 1 ? () => setMuted((m) => tracks.map((_, k) => (k === i ? !m[k] : !!m[k]))) : undefined,
     };
   });
 
-  // ---- audio preview
+  // ---- audio preview: one element per recording, played together and kept aligned on the
+  // timeline. The active recording is the clock (and where I/O apply); muted ones stay silent.
   const active = useModelActive(model);
-  const activeSlot = tracks[active]?.slot ?? tracks[0]?.slot ?? 0;
   const cacheKeys = useRef(new Map<string, number>());
-  const activeSource = project.sources[activeSlot];
-  let audioUrl: string | null = null;
-  if (activeSource) {
+  const urls = tracks.map((tr) => {
+    const source = project.sources[tr.slot];
+    if (!source) return null;
     // Cache-bust once per imported file, not on every project save (that would reload the audio).
-    const k = sourceKey(activeSource, activeSlot);
+    const k = sourceKey(source, tr.slot);
     if (!cacheKeys.current.has(k)) cacheKeys.current.set(k, project.updatedAt);
-    audioUrl = projectFileUrl(project, `source${activeSlot + 1}.m4a`, cacheKeys.current.get(k));
-  }
+    return projectFileUrl(project, `source${tr.slot + 1}.m4a`, cacheKeys.current.get(k));
+  });
+  const urlKey = urls.join("|");
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audios = useRef<HTMLAudioElement[]>([]);
   const raf = useRef(0);
   const [playing, setPlaying] = useState(false);
 
   const stop = useCallback(() => {
     cancelAnimationFrame(raf.current);
     raf.current = 0;
-    audioRef.current?.pause();
+    audios.current.forEach((a) => a.pause());
     setPlaying(false);
   }, []);
 
   useEffect(() => {
-    const a = new Audio();
-    a.preload = "auto";
-    audioRef.current = a;
-    const onEnded = () => stop();
-    a.addEventListener("ended", onEnded);
+    const list = urlKey.split("|").map((url) => {
+      const a = new Audio();
+      a.preload = "auto";
+      if (url && url !== "null") a.src = url;
+      return a;
+    });
+    audios.current = list;
+    stop();
     return () => {
       cancelAnimationFrame(raf.current);
       raf.current = 0;
-      a.removeEventListener("ended", onEnded);
-      a.pause();
-      a.removeAttribute("src");
-      a.load();
-      audioRef.current = null;
+      for (const a of list) {
+        a.pause();
+        a.removeAttribute("src");
+        a.load();
+      }
+      audios.current = [];
     };
-  }, [stop]);
+  }, [urlKey, stop]);
 
   useEffect(() => {
-    const a = audioRef.current;
-    if (!a) return;
-    stop();
-    if (audioUrl) a.src = audioUrl;
-    else a.removeAttribute("src");
-  }, [audioUrl, stop]);
+    audios.current.forEach((a, i) => (a.muted = !!muted[i]));
+  }, [muted, urlKey]);
 
-  // Playback drives the playhead; it stops at the out point.
+  /** Put every recording at the playhead (each on its own clock). */
+  const alignAll = useCallback(() => {
+    audios.current.forEach((a, i) => {
+      const track = model.tracks[i];
+      if (!track || !a.src) return;
+      a.currentTime = Math.max(0, Math.min(track.duration, model.fileTime(i, model.playhead)));
+    });
+  }, [model]);
+
+  // Playback drives the playhead; it stops at the active recording's out point.
   const tick = useCallback(() => {
-    const a = audioRef.current;
     const i = model.active;
+    const a = audios.current[i];
     const trim = model.trims[i];
     if (!a || !trim) return;
-    if (a.currentTime >= trim.end) {
+    if (a.currentTime >= trim.end || a.ended) {
       stop();
       model.setPlayhead(model.timelineTime(i, trim.end));
       return;
@@ -287,18 +301,16 @@ export function TrimPanel({ project, model }: { project: Project; model: Timelin
   }, [model, stop]);
 
   const play = useCallback(() => {
-    const a = audioRef.current;
     const i = model.active;
     const trim = model.trims[i];
     const track = model.tracks[i];
-    if (!a || !trim || !track || !a.src) return;
-    let f = model.fileTime(i, model.playhead);
-    if (f >= trim.end - 0.05 || f < 0 || f > track.duration) {
-      f = trim.start;
-      model.setPlayhead(model.timelineTime(i, f), true);
-    }
-    a.currentTime = f;
-    a.play()
+    const clock = audios.current[i];
+    if (!clock || !trim || !track || !clock.src) return;
+    const f = model.fileTime(i, model.playhead);
+    if (f >= trim.end - 0.05 || f < 0 || f > track.duration) model.setPlayhead(model.timelineTime(i, trim.start), true);
+    alignAll();
+    const started = audios.current.filter((a) => a.src).map((a) => a.play());
+    Promise.all(started)
       .then(() => {
         setPlaying(true);
         cancelAnimationFrame(raf.current);
@@ -308,26 +320,19 @@ export function TrimPanel({ project, model }: { project: Project; model: Timelin
         // A pause() racing the start rejects with AbortError; that is not worth a toast.
         if (!(e instanceof DOMException && e.name === "AbortError")) toastError(e);
       });
-  }, [model, tick]);
+  }, [model, tick, alignAll]);
 
   const toggle = useCallback(() => {
-    if (audioRef.current && !audioRef.current.paused) stop();
+    if (playing) stop();
     else play();
-  }, [play, stop]);
+  }, [play, stop, playing]);
 
-  // User seeks while playing jump the audio; switching recordings stops playback.
+  // User seeks while playing move every recording along.
   useEffect(() => {
     return model.subscribe((e) => {
-      const a = audioRef.current;
-      if (!a) return;
-      if (e === "seek" && !a.paused) {
-        const track = model.tracks[model.active];
-        a.currentTime = Math.max(0, Math.min(track?.duration ?? 0, model.fileTime(model.active, model.playhead)));
-      } else if (e === "active") {
-        stop();
-      }
+      if (e === "seek" && playing) alignAll();
     });
-  }, [model, stop]);
+  }, [model, alignAll, playing]);
 
   const setAtPlayhead = useCallback(
     (edge: Edge) => {
@@ -409,7 +414,7 @@ export function TrimPanel({ project, model }: { project: Project; model: Timelin
         </div>
       </div>
 
-      <Waveform model={model} rows={rows} selectable={dual} activeHint={t("setup.play")} />
+      <Waveform model={model} rows={rows} selectable={dual} activeHint={t("setup.play")} muteLabels={{ mute: t("setup.mute"), unmute: t("setup.unmute") }} />
 
       <div className="flex flex-wrap items-end gap-4 border-t border-line pt-4">
         <TimeField model={model} edge="in" label={t("setup.inPoint")} />

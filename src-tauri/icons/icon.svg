@@ -1,17 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Two voices: a split square (navy | cream), one half per speaker, with the turn on the seam. -->
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#6366f1"/>
-      <stop offset="1" stop-color="#4338ca"/>
-    </linearGradient>
+    <clipPath id="sq">
+      <rect x="64" y="64" width="896" height="896" rx="208"/>
+    </clipPath>
   </defs>
-  <rect x="64" y="64" width="896" height="896" rx="208" fill="url(#g)"/>
-  <g fill="#fff">
-    <rect x="232" y="432" width="64" height="160" rx="32"/>
-    <rect x="344" y="336" width="64" height="352" rx="32"/>
-    <rect x="456" y="256" width="64" height="512" rx="32"/>
-    <rect x="568" y="368" width="64" height="288" rx="32" opacity=".85"/>
-    <rect x="680" y="432" width="64" height="160" rx="32" opacity=".7"/>
-    <rect x="232" y="800" width="560" height="0" rx="0"/>
+  <g clip-path="url(#sq)">
+    <rect x="0" y="0" width="1024" height="1024" fill="#12243A"/>
+    <rect x="512" y="0" width="512" height="1024" fill="#F8F4EC"/>
+  </g>
+  <g fill="#F8F4EC">
+    <rect x="200" y="420" width="72" height="184" rx="36"/>
+    <rect x="320" y="312" width="72" height="400" rx="36"/>
+  </g>
+  <rect x="476" y="240" width="72" height="544" rx="36" fill="#7A2332"/>
+  <g fill="#12243A">
+    <rect x="632" y="344" width="72" height="336" rx="36"/>
+    <rect x="752" y="436" width="72" height="152" rx="36"/>
   </g>
 </svg>

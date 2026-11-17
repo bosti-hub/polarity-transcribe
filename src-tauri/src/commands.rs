@@ -102,8 +102,18 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 }
 
 #[tauri::command]
-pub fn set_settings(state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
+pub fn set_settings(app: tauri::AppHandle, state: State<'_, AppState>, settings: Settings) -> CmdResult<()> {
     state.save_settings(&settings).map_err(err)?;
+    let language_changed = state.settings.lock().unwrap().ui_language != settings.ui_language;
+    #[cfg(target_os = "macos")]
+    if language_changed {
+        // The menu bar follows the app's language.
+        if let Ok(menu) = crate::menu::build(&app, settings.ui_language == "nl") {
+            let _ = app.set_menu(menu);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, language_changed);
     *state.settings.lock().unwrap() = settings;
     Ok(())
 }
@@ -447,6 +457,8 @@ pub struct AnonymizeRule {
 pub struct ProjectExtras {
     anonymize: Vec<AnonymizeRule>,
     custom_tags: Vec<String>,
+    /// Built-in labels the researcher removed from this interview's list.
+    hidden_tags: Vec<String>,
     /// Transcript time (seconds) up to which the researcher has checked the text against the audio.
     reviewed_until: Option<f64>,
     /// Passages the researcher saved as quotes.
@@ -521,6 +533,112 @@ pub async fn copy_original(state: State<'_, AppState>, id: String, dest: String)
     .map_err(|e| e.to_string())?
 }
 
+/// Voice anonymisation for quote fragments. Both modes start from a random factor (0.80 to
+/// 0.88, different for every fragment and not stored anywhere) by which pitch and formants are
+/// lowered at the original speed.
+/// - `tv`: as on television: a deeper voice whose shift also drifts slowly over time (vibrato at
+///   a random rate), band-limited and compressed so it is clear and loud. Hard to undo because
+///   the shift is unknown and changes over time, but not impossible in principle. Measured on a
+///   Dutch interview: about 80% of the words still recognised.
+/// - `whisper`: additionally replaces the phase of every short frame with random values, so the
+///   fundamental frequency (pitch, intonation) is gone for good. Irreversible, less intelligible
+///   (about 60%).
+fn anonymise_filter(mode: &str) -> String {
+    // Random values without a random-number crate: the clock's nanoseconds are unpredictable
+    // enough here (the values only have to be unknown, not cryptographically secret).
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    let factor = 0.80 + 0.08 * (nanos % 1000) as f64 / 999.0;
+    let drift = 0.25 + 0.25 * ((nanos / 1000) % 1000) as f64 / 999.0;
+    let mut chain = format!(
+        "aresample=44100,asetrate={rate},aresample=44100,atempo={tempo:.6},vibrato=f={drift:.3}:d=0.08,\
+         highpass=f=150,lowpass=f=6000,\
+         acompressor=threshold=-26dB:ratio=5:attack=5:release=150:makeup=8,alimiter=limit=0.95",
+        rate = (44100.0 * factor).round() as u32,
+        tempo = 1.0 / factor,
+    );
+    if mode == "whisper" {
+        chain.push_str(",afftfilt=real='hypot(re,im)*cos(2*PI*random(0))':imag='hypot(re,im)*sin(2*PI*random(1))':win_size=512:overlap=0.75");
+    }
+    chain
+}
+
+/// Cut a passage out of an interview's playback audio into its own file (for quotes). `start`
+/// and `end` are seconds on the transcript's timeline; `dest` ends in .m4a (AAC), .mp3 or .wav.
+/// Re-encodes, so the cut is exact rather than snapped to the nearest audio frame. With `voice`
+/// ("tv" or "whisper"), the voice is anonymised (see `anonymise_filter`); `bleeps` are spans
+/// (transcript timeline) to beep out, such as pseudonymised names.
+#[tauri::command]
+pub async fn export_clip(
+    state: State<'_, AppState>,
+    id: String,
+    start: f64,
+    end: f64,
+    dest: String,
+    voice: Option<String>,
+    bleeps: Option<Vec<(f64, f64)>>,
+) -> CmdResult<()> {
+    let dir = state.store.dir(&id).map_err(err)?;
+    let source = dir.join(pt_core::pipeline::PLAYBACK_FILE);
+    if !source.is_file() {
+        return Err("this interview has no playback audio".into());
+    }
+    let start = start.max(0.0);
+    if !(end > start) {
+        return Err("the passage is empty".into());
+    }
+    let to = PathBuf::from(dest);
+    let ext = to.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || -> CmdResult<()> {
+        if let Some(parent) = to.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("could not create {}: {e}", parent.display()))?;
+        }
+        let mut cmd = pt_core::ffmpeg::ffmpeg_command();
+        cmd.arg("-y")
+            .args(["-ss", &format!("{start:.3}")])
+            .arg("-i")
+            .arg(&source)
+            .args(["-t", &format!("{:.3}", end - start)])
+            .arg("-vn");
+        let filters: Vec<String> = [voice.as_deref().map(anonymise_filter), bleep_filter(&bleeps.unwrap_or_default(), start, end, voice.is_some())]
+            .into_iter()
+            .flatten()
+            .collect();
+        if !filters.is_empty() {
+            cmd.arg("-af").arg(filters.join(","));
+        }
+        match ext.as_str() {
+            "wav" => cmd.args(["-c:a", "pcm_s16le"]),
+            "mp3" => cmd.args(["-c:a", "libmp3lame", "-b:a", "128k"]),
+            _ => cmd.args(["-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"]),
+        };
+        let out = cmd.arg(&to).output().map_err(|e| format!("could not start FFmpeg: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("FFmpeg could not cut the passage: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// A beep over each span (seconds on the interview's timeline) of a fragment that starts at
+/// `start`: a 1 kHz tone in place of the voice, a little wider than the words, as the
+/// recogniser's word times are not exact. About as loud as the voice: `loud` for the disguised
+/// voices, which are compressed to a high level. None when there is nothing to beep.
+fn bleep_filter(spans: &[(f64, f64)], start: f64, end: f64, loud: bool) -> Option<String> {
+    let parts: Vec<String> = spans
+        .iter()
+        .map(|&(s, e)| ((s - start - 0.08).max(0.0), (e - start + 0.06).min(end - start)))
+        .filter(|(s, e)| e > s)
+        .map(|(s, e)| format!("between(t,{s:.3},{e:.3})"))
+        .collect();
+    if parts.is_empty() {
+        return None;
+    }
+    let level = if loud { 0.18 } else { 0.07 };
+    Some(format!("aeval=exprs='if({},{level}*sin(2*PI*1000*t),val(ch))'", parts.join("+")))
+}
+
 /// Show a file or folder in the system file manager.
 #[tauri::command]
 pub fn reveal_in_folder(path: String) -> CmdResult<()> {
@@ -543,4 +661,36 @@ pub fn reveal_in_folder(path: String) -> CmdResult<()> {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let result = std::process::Command::new("xdg-open").arg(if p.is_dir() { p } else { p.parent().unwrap_or(p) }).spawn();
     result.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Open one of the project's own web pages in the default browser. Only these fixed addresses
+/// can be opened, so the frontend cannot use this to open arbitrary links.
+#[tauri::command]
+pub fn open_project_page(page: String) -> CmdResult<()> {
+    let url = match page.as_str() {
+        "home" => "https://github.com/bosti-hub/polarity-transcribe",
+        "issues" => "https://github.com/bosti-hub/polarity-transcribe/issues",
+        "license" => "https://github.com/bosti-hub/polarity-transcribe/blob/main/LICENSE",
+        _ => return Err("unknown page".into()),
+    };
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new("explorer").arg(url).spawn();
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let result = std::process::Command::new("xdg-open").arg(url).spawn();
+    result.map(|_| ()).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bleep_filter;
+
+    #[test]
+    fn bleeps_are_relative_to_the_fragment_and_clamped() {
+        assert_eq!(bleep_filter(&[], 10.0, 20.0, false), None);
+        assert_eq!(bleep_filter(&[(30.0, 31.0)], 10.0, 20.0, false), None);
+        let f = bleep_filter(&[(9.5, 10.5), (12.0, 12.4), (19.9, 21.0)], 10.0, 20.0, true).unwrap();
+        assert_eq!(f, "aeval=exprs='if(between(t,0.000,0.560)+between(t,1.920,2.460)+between(t,9.820,10.000),0.18*sin(2*PI*1000*t),val(ch))'");
+    }
 }

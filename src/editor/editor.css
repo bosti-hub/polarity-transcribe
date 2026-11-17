@@ -155,3 +155,36 @@
     column-gap: 14px;
   }
 }
+
+/* Pseudonyms: the original text is kept but folded away, the pseudonym is shown in its place.
+   With the cursor in it, the original is shown (and can be edited), marked as a pseudonymised
+   passage. */
+.transcript .anon-hidden {
+  font-size: 0;
+  letter-spacing: 0;
+}
+.transcript .anon-chip {
+  display: inline-block;
+  padding: 0 0.3em;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: text;
+  user-select: none;
+}
+.transcript .anon-chip.current {
+  background: var(--accent);
+  color: var(--accent-fg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.transcript .anon-chip.removed {
+  background: var(--surface-3);
+  color: var(--muted);
+}
+.transcript .anon-editing {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 -1.5px 0 var(--accent);
+  border-radius: 3px 3px 0 0;
+}

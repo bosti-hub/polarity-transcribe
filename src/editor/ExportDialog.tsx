@@ -1,6 +1,7 @@
-import { AlertTriangle, BookOpen, FileCode2, FileText, FileType2, Info, Microscope, Subtitles, Table2 } from "lucide-react";
+import { AlertTriangle, BookOpen, FileCode2, FileText, FileType2, Info, Microscope, Sheet, Subtitles, Table2 } from "lucide-react";
 import { useState } from "react";
 import { Button, Callout, cx, Dialog, Segmented, Select, Switch } from "@/components/ui";
+import { useQuoteExport, type QuoteSource } from "@/components/QuoteExport";
 import { exportTranscript, HAS_LAYOUT, type ExportFormat, type ExportOptions } from "@/export";
 import type { PauseNotation } from "@/export/notation";
 import { api, errorMessage } from "@/lib/api";
@@ -32,6 +33,7 @@ export const FORMAT_GROUPS: { label: TKey; formats: FormatInfo[] }[] = [
     formats: [
       { id: "maxqda", label: "export.maxqda", hint: "export.maxqdaHint", icon: <Microscope className="size-4" /> },
       { id: "nvivo", label: "export.nvivo", hint: "export.nvivoHint", icon: <Table2 className="size-4" /> },
+      { id: "csv", label: "export.csv", hint: "export.csvHint", icon: <Sheet className="size-4" /> },
     ],
   },
   {
@@ -195,6 +197,9 @@ export function ExportDialog({
   rules,
   getTranscript,
   doubts,
+  quotes,
+  tab,
+  onTab,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -204,6 +209,10 @@ export function ExportDialog({
   /** Returns the transcript as it is in the editor right now. */
   getTranscript: () => Transcript;
   doubts: number;
+  /** The interview's quotes, for the Quotes tab. */
+  quotes: QuoteSource;
+  tab: ExportTab;
+  onTab: (tab: ExportTab) => void;
 }) {
   const t = useT();
   const uiLanguage = useApp((s) => s.settings.uiLanguage);
@@ -217,6 +226,7 @@ export function ExportDialog({
   const [notation, setNotation] = useNotation();
   const [busy, setBusy] = useState(false);
   const context = exportContext(project, study);
+  const quoteExport = useQuoteExport(quotes, () => onOpenChange(false));
 
   const run = async () => {
     setBusy(true);
@@ -243,23 +253,40 @@ export function ExportDialog({
     }
   };
 
+  const onQuotes = tab === "quotes";
+  const runQuotes = () => quoteExport.run().catch((e) => toast(errorMessage(e), "error"));
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
-      title={t("export.title")}
+      onOpenChange={(o) => !quoteExport.busy && onOpenChange(o)}
+      title={onQuotes ? t("quoteExport.title") : t("export.title")}
       width={600}
+      dismissable={!quoteExport.busy}
       footer={
         <>
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={quoteExport.busy}>
             {t("common.cancel")}
           </Button>
-          <Button variant="primary" loading={busy} onClick={run}>
-            {t("export.saveAs")}
-          </Button>
+          {onQuotes ? (
+            <Button variant="primary" loading={quoteExport.busy} disabled={quotes.count === 0} onClick={() => void runQuotes()}>
+              {quoteExport.busyLabel ?? t("quoteExport.export")}
+            </Button>
+          ) : (
+            <Button variant="primary" loading={busy} onClick={run}>
+              {t("export.saveAs")}
+            </Button>
+          )}
         </>
       }
     >
+      <ExportTabs tab={tab} onTab={onTab} quotes={quotes.count} />
+      {onQuotes ? (
+        quotes.count === 0 ? (
+          <p className="py-6 text-center text-[13px] text-muted">{t("quotes.empty")}</p>
+        ) : (
+          quoteExport.form
+        )
+      ) : (
       <div className="flex flex-col gap-4">
         <FormatPicker value={format} onChange={setFormat} />
         <FormatOptions
@@ -286,6 +313,26 @@ export function ExportDialog({
           </Callout>
         )}
       </div>
+      )}
     </Dialog>
+  );
+}
+
+export type ExportTab = "transcript" | "quotes";
+
+/** Transcript or quotes: the same dialog, two tabs. Shared with the study export. */
+export function ExportTabs({ tab, onTab, quotes }: { tab: ExportTab; onTab: (tab: ExportTab) => void; quotes: number }) {
+  const t = useT();
+  return (
+    <div className="mb-4">
+      <Segmented
+        value={tab}
+        onChange={onTab}
+        options={[
+          { value: "transcript", label: t("export.tabTranscript") },
+          { value: "quotes", label: `${t("quotes.title")} (${quotes})` },
+        ]}
+      />
+    </div>
   );
 }

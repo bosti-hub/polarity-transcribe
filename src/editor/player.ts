@@ -54,6 +54,34 @@ export class Player {
   ) {
     this.state.stereo = stereo;
     this.audio = this.createAudio();
+    this.bindMediaKeys();
+  }
+
+  /**
+   * The keyboard's play/pause key (and headphone buttons, Control Centre) reach the app through
+   * the system's media controls. Route them through `toggle`, so they behave like Esc
+   * (including the jump back after a pause).
+   */
+  private bindMediaKeys() {
+    const session = typeof navigator !== "undefined" ? navigator.mediaSession : undefined;
+    if (!session) return;
+    const toggle = () => {
+      if (!this.destroyed) this.toggle();
+    };
+    try {
+      session.setActionHandler("play", toggle);
+      session.setActionHandler("pause", toggle);
+    } catch {
+      // Not supported by this webview; Esc still works.
+    }
+  }
+
+  private setMediaState(state: MediaSessionPlaybackState) {
+    try {
+      if (typeof navigator !== "undefined" && navigator.mediaSession) navigator.mediaSession.playbackState = state;
+    } catch {
+      // Not supported.
+    }
   }
 
   private createAudio(): HTMLAudioElement {
@@ -68,9 +96,13 @@ export class Player {
     audio.addEventListener("durationchange", () => this.set({ duration: audio.duration || 0 }));
     audio.addEventListener("play", () => {
       this.set({ playing: true });
+      this.setMediaState("playing");
       this.loopFrame();
     });
-    audio.addEventListener("pause", () => this.set({ playing: false, time: audio.currentTime }));
+    audio.addEventListener("pause", () => {
+      this.set({ playing: false, time: audio.currentTime });
+      this.setMediaState("paused");
+    });
     audio.addEventListener("ended", () => this.set({ playing: false }));
     audio.addEventListener("seeked", () => {
       this.set({ time: audio.currentTime });
@@ -208,6 +240,10 @@ export class Player {
   pause() {
     this.pausedAt = this.audio.currentTime;
     this.audio.pause();
+    // WebKit (macOS) can keep repeating its last audio buffer through the filter graph after a
+    // pause at a speed other than 1x; stop the graph until playback resumes. (Muting the element
+    // instead would make macOS hand the play key to another app, such as Music.)
+    if (this.ctx?.state === "running") void this.ctx.suspend();
   }
 
   /** Play or pause. Resuming where a pause left off first jumps back a little (see setRewind). */
@@ -250,24 +286,63 @@ export class Player {
 
   setClarity(on: boolean) {
     this.set({ clarity: on });
-    if (on || this.nodes) {
-      this.graph();
-      this.applyRouting();
-      void this.ctx?.resume();
-    }
+    this.updateGraph();
   }
 
   setListen(listen: Listen) {
     this.set({ listen });
-    if (listen !== "both" || this.nodes) {
+    this.updateGraph();
+  }
+
+  /**
+   * Build the Web Audio graph when a filter or channel choice needs it, and drop it again when
+   * nothing does. In WebKit (macOS) audio that passes through Web Audio does not follow the
+   * playback speed well (it stutters at other speeds), so plain playback must not use it.
+   */
+  private updateGraph() {
+    const needed = this.state.clarity || this.state.listen !== "both";
+    if (needed) {
       this.graph();
       this.applyRouting();
-      void this.ctx?.resume();
+      if (!this.audio.paused) void this.ctx?.resume();
+    } else if (this.nodes) {
+      this.releaseGraph();
     }
+  }
+
+  /** A media element cannot be disconnected from Web Audio, so start a fresh one where we were. */
+  private releaseGraph() {
+    const old = this.audio;
+    const time = old.currentTime;
+    const playing = !old.paused;
+    old.pause();
+    old.removeAttribute("src");
+    old.load();
+    void this.ctx?.close();
+    this.ctx = null;
+    this.nodes = null;
+    const audio = this.createAudio();
+    audio.playbackRate = this.state.rate;
+    audio.defaultPlaybackRate = this.state.rate;
+    audio.addEventListener(
+      "loadedmetadata",
+      () => {
+        audio.currentTime = time;
+        if (playing) void this.play();
+      },
+      { once: true },
+    );
+    this.audio = audio;
   }
 
   destroy() {
     this.destroyed = true;
+    try {
+      navigator.mediaSession?.setActionHandler("play", null);
+      navigator.mediaSession?.setActionHandler("pause", null);
+    } catch {
+      // Not supported.
+    }
     cancelAnimationFrame(this.raf);
     this.audio.pause();
     this.audio.removeAttribute("src");

@@ -86,6 +86,10 @@ export const api = {
   /** Write an exported file to a path the user picked in the save dialog. */
   writeFile: (path: string, bytes: Uint8Array) => invoke<void>("write_file", { path, bytes: Array.from(bytes) }),
   revealInFolder: (path: string) => invoke<void>("reveal_in_folder", { path }),
+  /** Cut a passage into its own audio file; `bleeps` are spans (transcript timeline) to beep out. */
+  exportClip: (id: string, start: number, end: number, dest: string, voice: "tv" | "whisper" | null, bleeps: [number, number][] = []) =>
+    invoke<void>("export_clip", { id, start, end, dest, voice, bleeps }),
+  openProjectPage: (page: "home" | "issues" | "license") => invoke<void>("open_project_page", { page }),
   /** Copy an interview's original recording to `dest`; false when the original no longer exists. */
   copyOriginal: (id: string, dest: string) => invoke<boolean>("copy_original", { id, dest }),
 };
@@ -113,6 +117,8 @@ export const events = {
     listen<DownloadProgress>("download-progress", (e) => cb(e.payload)),
   /** Interviews waiting to be transcribed, in order. */
   queueChanged: (cb: (ids: string[]) => void): Promise<UnlistenFn> => listen<string[]>("queue-changed", (e) => cb(e.payload)),
+  /** A choice in the macOS menu bar that the web UI handles ("help", "settings"). */
+  menu: (cb: (id: string) => void): Promise<UnlistenFn> => listen<string>("menu", (e) => cb(e.payload)),
 };
 
 /** Human-readable message from whatever a failed command threw. */

@@ -7,7 +7,8 @@ installers and the models the app downloads contain or use the following third-p
 
 | Component | Used for | License |
 | --- | --- | --- |
-| [FFmpeg](https://ffmpeg.org) (separate executable, built by `scripts/build-ffmpeg.sh` from the unmodified official source release named in that script, without GPL or non-free parts) | Reading audio files, writing the playback copy | LGPL 2.1 or later |
+| [FFmpeg](https://ffmpeg.org) (separate executable, built by `scripts/build-ffmpeg.sh` from the unmodified official source release named in that script, without GPL or non-free parts) | Reading audio files, writing the playback copy and quote fragments | LGPL 2.1 or later |
+| [LAME](https://lame.sourceforge.io) 3.100 (linked into the FFmpeg executable above, built from the unmodified official source by the same script) | MP3 quote fragments | LGPL 2.0 or later |
 | [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and ggml | Speech recognition | MIT |
 | [ONNX Runtime](https://github.com/microsoft/onnxruntime), prebuilt by the [ort](https://github.com/pykeio/ort) project | Running the speaker model | MIT |
 | DirectML (`DirectML.dll`, Windows only) | Required by the ONNX Runtime build | Microsoft DirectML redistributable license |
@@ -17,8 +18,9 @@ installers and the models the app downloads contain or use the following third-p
 | [React](https://react.dev), [TipTap](https://tiptap.dev) / ProseMirror, [Radix UI](https://www.radix-ui.com), [lucide](https://lucide.dev), [docx](https://docx.js.org), [zustand](https://github.com/pmndrs/zustand), [Tailwind CSS](https://tailwindcss.com) and the other packages listed in `package-lock.json` | User interface and export | MIT, ISC or Apache-2.0 |
 | [Inter](https://rsms.me/inter/) typeface (bundled, so no font is fetched from the internet) | User interface | SIL Open Font License 1.1 |
 
-FFmpeg is called as a separate program and is not linked into the application. Its source code is
-available from <https://ffmpeg.org/releases/>; the exact version and build options are in
+FFmpeg (with LAME) is called as a separate program and is not linked into the application. The
+source code is available from <https://ffmpeg.org/releases/> and
+<https://sourceforge.net/projects/lame/files/lame/>; the exact versions and build options are in
 `scripts/build-ffmpeg.sh`.
 
 ## Downloaded by the app on request (not in the installers)

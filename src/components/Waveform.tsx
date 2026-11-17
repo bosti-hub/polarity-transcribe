@@ -4,6 +4,7 @@
 // Everything that changes per frame (view, playhead, dragging) lives in the model and is drawn
 // straight to <canvas> on the next animation frame; React only renders the static structure.
 
+import { Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { cx } from "./ui";
 import { MIN_SPAN, type Edge, type TimelineModel } from "./setup/timelineModel";
@@ -26,6 +27,9 @@ export interface WaveformRow {
   /** CSS variable for the speaker dot, e.g. "--sp1". */
   color: string;
   lanes: number;
+  /** Whether this recording is muted in the preview; undefined = no mute button. */
+  muted?: boolean;
+  onMute?: () => void;
 }
 
 // ------------------------------------------------------------------ painting
@@ -363,6 +367,7 @@ export function Waveform({
   rows,
   selectable,
   activeHint,
+  muteLabels,
 }: {
   model: TimelineModel;
   rows: WaveformRow[];
@@ -370,6 +375,8 @@ export function Waveform({
   selectable: boolean;
   /** Tooltip-ish title for selectable headers. */
   activeHint?: string;
+  /** Labels of the per-recording mute button. */
+  muteLabels?: { mute: string; unmute: string };
 }) {
   const detailRef = useRef<HTMLDivElement | null>(null);
   const active = useActive(model);
@@ -391,24 +398,42 @@ export function Waveform({
           const isActive = selectable && i === active;
           const height = row.lanes > 1 ? STEREO_LANE_H * row.lanes : LANE_H;
           return (
-            <div key={i} className="col-span-2 grid grid-cols-subgrid">
-              <button
-                type="button"
-                disabled={!selectable}
-                title={selectable ? activeHint : undefined}
-                onClick={() => model.setActive(i)}
-                className={cx(
-                  "flex min-w-0 flex-col items-start justify-center gap-0.5 rounded-lg px-2.5 text-left transition-colors disabled:cursor-default",
-                  isActive ? "bg-accent-soft" : selectable && "hover:bg-surface-2",
-                )}
+            <div
+              key={i}
+              className="col-span-2 grid grid-cols-subgrid"
+              // The recording under the pointer is the one I/O and the readouts apply to.
+              onPointerEnter={() => selectable && model.setActive(i)}
+            >
+              <div
+                className={cx("flex min-w-0 items-center gap-1 rounded-lg pr-1 transition-colors", isActive ? "bg-accent-soft" : selectable && "hover:bg-surface-2")}
                 style={{ height }}
               >
-                <span className="flex w-full min-w-0 items-center gap-1.5 text-[13px] font-medium text-fg">
-                  <span className="size-2 shrink-0 rounded-full" style={{ background: `var(${row.color})` }} />
-                  <span className="truncate">{row.label}</span>
-                </span>
-                {row.detail && <span className="w-full truncate text-xs text-muted">{row.detail}</span>}
-              </button>
+                <button
+                  type="button"
+                  disabled={!selectable}
+                  title={selectable ? activeHint : undefined}
+                  onClick={() => model.setActive(i)}
+                  className="flex h-full min-w-0 flex-1 flex-col items-start justify-center gap-0.5 pl-2.5 text-left disabled:cursor-default"
+                >
+                  <span className="flex w-full min-w-0 items-center gap-1.5 text-[13px] font-medium text-fg">
+                    <span className="size-2 shrink-0 rounded-full" style={{ background: `var(${row.color})` }} />
+                    <span className="truncate">{row.label}</span>
+                  </span>
+                  {row.detail && <span className="w-full truncate text-xs text-muted">{row.detail}</span>}
+                </button>
+                {row.onMute && (
+                  <button
+                    type="button"
+                    onClick={row.onMute}
+                    aria-pressed={row.muted}
+                    aria-label={row.muted ? muteLabels?.unmute : muteLabels?.mute}
+                    title={row.muted ? muteLabels?.unmute : muteLabels?.mute}
+                    className={cx("flex size-6 shrink-0 items-center justify-center rounded-md hover:bg-surface-3", row.muted ? "text-danger" : "text-muted")}
+                  >
+                    {row.muted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+                  </button>
+                )}
+              </div>
               <TrackLanes model={model} index={i} height={height} />
             </div>
           );

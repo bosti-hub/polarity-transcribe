@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { comboLabel, isTypingKey, keyCombo } from "./keys";
+import { comboLabel, isTypingKey, keyCombo, keyName, shortcutLabel } from "./keys";
 
 const ev = (code: string, mods: Partial<Record<"ctrlKey" | "metaKey" | "altKey" | "shiftKey", boolean>> = {}) => ({
   ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, key: "", code, ...mods,
@@ -18,8 +18,19 @@ describe("keys", () => {
   });
 
   it("shows readable labels", () => {
-    expect(comboLabel("Ctrl+Shift+KeyB")).toBe("Ctrl+Shift+B");
-    expect(comboLabel("MediaPlayPause")).toBe("Play/Pause");
-    expect(comboLabel("Alt+ArrowLeft")).toBe("Alt+Left");
+    expect(comboLabel("Ctrl+Shift+KeyB", false)).toBe("Ctrl+Shift+B");
+    expect(comboLabel("MediaPlayPause", false)).toBe("Play/Pause");
+    expect(comboLabel("Alt+ArrowLeft", false)).toBe("Alt+Left");
+  });
+
+  it("uses Mac symbols in the standard modifier order on a Mac", () => {
+    expect(comboLabel("Ctrl+Shift+KeyB", true)).toBe("⌃⇧B");
+    expect(comboLabel("Alt+ArrowLeft", true)).toBe("⌥Left");
+    expect(shortcutLabel("Alt+←", true)).toBe("⌥←");
+    expect(shortcutLabel("⌘+Shift+Enter", true)).toBe("⇧⌘↩");
+    expect(shortcutLabel("Esc / ⏯", true)).toBe("Esc / ⏯");
+    expect(shortcutLabel("Alt+←", false)).toBe("Alt+←");
+    expect(keyName("Alt", true)).toBe("⌥");
+    expect(keyName("Alt", false)).toBe("Alt");
   });
 });

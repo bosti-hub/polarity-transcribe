@@ -2,6 +2,8 @@
 
 mod commands;
 mod jobs;
+#[cfg(target_os = "macos")]
+mod menu;
 mod models;
 mod state;
 mod studies;
@@ -21,6 +23,13 @@ pub fn run() {
             let data_dir = app.path().app_local_data_dir()?;
             let state = AppState::new(data_dir)?;
             state.store.sweep();
+            #[cfg(target_os = "macos")]
+            {
+                let dutch = state.settings.lock().map(|s| s.ui_language == "nl").unwrap_or(false);
+                let menu = menu::build(app.handle(), dutch)?;
+                app.set_menu(menu)?;
+                app.on_menu_event(|app, event| menu::handle(app, event.id().as_ref()));
+            }
             app.manage(state);
             Ok(())
         })
@@ -45,7 +54,9 @@ pub fn run() {
             commands::load_report,
             commands::write_file,
             commands::copy_original,
+            commands::export_clip,
             commands::reveal_in_folder,
+            commands::open_project_page,
             models::list_models,
             models::download_model,
             models::cancel_download,

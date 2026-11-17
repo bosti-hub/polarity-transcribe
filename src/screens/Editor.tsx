@@ -30,19 +30,29 @@ import {
   Quote as QuoteIcon,
   Search,
   X,
+  CircleAlert,
+  CircleCheck,
+  CircleHelp,
+  Settings as SettingsIcon,
+  Redo2,
+  Undo2,
+  Loader2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Frame } from "@/components/Frame";
+import { Frame, OfflineBadge } from "@/components/Frame";
 import { Button, cx, IconButton, Menu, MenuItem, Segmented, Select, Spinner, Tooltip } from "@/components/ui";
 import "@/editor/editor.css";
 import { InterviewDetails } from "@/components/InterviewDetails";
-import { ExportDialog } from "@/editor/ExportDialog";
+import { ExportDialog, type ExportTab } from "@/editor/ExportDialog";
 import { AnonymizePanel, InfoPanel, MOD, QuotesPanel, SpeakersPanel, TagsPanel, type Report } from "@/editor/panels";
 import { Player, type Listen, type PlayerState } from "@/editor/player";
 import {
   doubts as findDoubts,
   highlightKey,
   Highlights,
+  pseudonymKey,
+  pseudonymMatches,
+  Pseudonyms,
   rangeAt,
   selectionSpan,
   SYSTEM,
@@ -53,8 +63,9 @@ import {
   type TimedRange,
 } from "@/editor/plugins";
 import { createTurn, fromDoc, Timing, toDoc, turnViews, type TimingAttrs } from "@/editor/schema";
-import { mergeRules, placeholderFor, suggestCandidates, wholeWord, type Candidate } from "@/lib/anonymize";
-import { recordingOffset } from "@/lib/interviews";
+import { anonymizeText, mergeRules, pseudonymSpans, wholeWord } from "@/lib/anonymize";
+import type { QuoteExportItem } from "@/components/QuoteExport";
+import { participantCodes, recordingOffset } from "@/lib/interviews";
 import { isModifierOnly, keyCombo } from "@/lib/keys";
 import { api, errorMessage, projectFileUrl } from "@/lib/api";
 import { DEFAULT_TAGS, useT } from "@/lib/i18n";
@@ -129,7 +140,8 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
   // Interview details edited in the side panel (the player keeps using the loaded project).
   const [details, setDetails] = useState<Project>(project);
   const [panel, setPanel] = useState<PanelId>("speakers");
-  const [saveState, setSaveState] = useState<"saved" | "saving">("saved");
+  const [saveState, setSaveState] = useState<SaveState>("saved");
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [clickPlays, setClickPlays] = useState(true);
   const clickPlaysRef = useRef(true);
@@ -137,8 +149,6 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
   const [speakerMenu, setSpeakerMenu] = useState<{ pos: number; x: number; y: number } | null>(null);
   const [stats, setStats] = useState({ words: 0, doubts: 0 });
   const [anonCounts, setAnonCounts] = useState<{ study: number[]; interview: number[] }>({ study: [], interview: [] });
-  const [candidates, setCandidates] = useState<Candidate[] | null>(null);
-  const dismissed = useRef(new Set<string>());
   const [reviewedUntil, setReviewedUntil] = useState<number | null>(initialExtras.reviewedUntil ?? null);
   const [search, setSearch] = useState<{ open: boolean; focus: number }>({ open: false, focus: 0 });
   const settingsRef = useRef(settings);
@@ -179,6 +189,7 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
       }),
       UndoRedo.configure({ depth: 300 }),
       Highlights.configure({ showDoubts: settings.showDoubts, threshold: settings.doubtThreshold }),
+      Pseudonyms,
     ],
     // Extensions are created once; later setting changes reach the plugin through metas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -195,9 +206,13 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
     dirty.current = false;
     try {
       await api.saveTranscript(project.id, fromDoc(ed.state.doc, transcript, speakersRef.current));
-      if (!dirty.current) setSaveState("saved");
+      if (!dirty.current) {
+        setSaveState("saved");
+        setSavedAt(new Date());
+      }
     } catch (e) {
       dirty.current = true;
+      setSaveState("error");
       toast(errorMessage(e), "error");
     }
   }, [project.id, transcript, toast]);
@@ -247,6 +262,27 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
     content: toDoc(transcript),
     editorProps: {
       attributes: { spellcheck: "false", autocorrect: "off", autocapitalize: "off" },
+      // With text selected, typing must not replace it by accident: a selection is usually made
+      // to listen to it or to mark it. Space plays or pauses; other typing keys do nothing.
+      // Only Backspace/Delete (and cut or paste) change selected text.
+      handleKeyDown(view, event) {
+        if (view.state.selection.empty || event.isComposing) return false;
+        if (event.metaKey || event.ctrlKey) return false;
+        if (event.key === " " && !event.altKey && !event.shiftKey) {
+          event.preventDefault();
+          player.toggle();
+          return true;
+        }
+        if (event.key.length === 1 || event.key === "Enter" || event.key === "Tab") {
+          event.preventDefault();
+          return true;
+        }
+        return false;
+      },
+      handleTextInput(view) {
+        // Dead keys, the character viewer and dictation arrive here instead of as key presses.
+        return !view.state.selection.empty;
+      },
       handleClick(view, pos, event) {
         if (!clickPlaysRef.current || event.button !== 0 || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return false;
         const timing = timingAt(view.state, pos);
@@ -298,6 +334,30 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
     setHighlights({ showDoubts: settings.showDoubts, threshold: settings.doubtThreshold });
   }, [setHighlights, settings.showDoubts, settings.doubtThreshold, editor]);
 
+  // Pseudonymisation: show each pseudonym in place of the original in the text (the original
+  // stays in the transcript; see the Pseudonyms plugin). Can be switched off in the panel.
+  const previewRules = useMemo(() => mergeRules(extras.anonymize, studyRules), [extras.anonymize, studyRules]);
+  const [showPseudonyms, setShowPseudonyms] = useState(() => {
+    try {
+      return localStorage.getItem("pt.showPseudonyms") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("pt.showPseudonyms", showPseudonyms ? "1" : "0");
+    } catch {
+      // Remembering the choice is a convenience only.
+    }
+  }, [showPseudonyms]);
+  useEffect(() => {
+    const ed = editorRef.current;
+    if (!ed || ed.isDestroyed) return;
+    const label = (text: string) => t("editor.anonOriginal", { text });
+    ed.view.dispatch(ed.state.tr.setMeta(pseudonymKey, { on: showPseudonyms, rules: previewRules, label }).setMeta("addToHistory", false));
+  }, [showPseudonyms, previewRules, editor, t]);
+
   // Follow the audio: highlight the spoken word and keep it in view.
   const lastManualScroll = useRef(0);
   useEffect(() => {
@@ -344,6 +404,47 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
       toast(t("editor.loopHint"));
     }
   }, [player, setHighlights, toast, t]);
+
+  /**
+   * Go to the next or previous occurrence of a pseudonymisation term (as the export matches it).
+   * The occurrence stays shown as its pseudonym, highlighted, and is scrolled to the middle.
+   */
+  const jumpToTerm = useCallback((find: string, direction: 1 | -1) => {
+    const ed = editorRef.current;
+    const box = scrollRef.current;
+    if (!ed || !box) return;
+    const list = pseudonymMatches(ed.state.doc, [{ find, replace: "" }]);
+    if (list.length === 0) return;
+    // Start from the previous jump; without one, from the cursor when it is on screen, else from
+    // what is on screen now (the cursor may be far away, or nowhere yet).
+    const current = pseudonymKey.getState(ed.state)?.current ?? null;
+    const r = box.getBoundingClientRect();
+    let next: (typeof list)[number] | undefined;
+    if (current && list.some((m) => m.from === current.from)) {
+      next = direction === 1 ? list.find((m) => m.from > current.from) : [...list].reverse().find((m) => m.from < current.from);
+    } else {
+      const head = ed.state.selection.head;
+      const hc = ed.view.coordsAtPos(head);
+      if (hc.top >= r.top && hc.bottom <= r.bottom) {
+        next = direction === 1 ? list.find((m) => m.from > head) : [...list].reverse().find((m) => m.to < head);
+      } else {
+        const x = r.left + r.width / 2;
+        const top = ed.view.posAtCoords({ left: x, top: r.top + 8 })?.pos ?? 0;
+        const bottom = ed.view.posAtCoords({ left: x, top: r.bottom - 8 })?.pos ?? ed.state.doc.content.size;
+        next = direction === 1 ? list.find((m) => m.from >= top) : [...list].reverse().find((m) => m.to <= bottom);
+      }
+    }
+    next ??= direction === 1 ? list[0] : list[list.length - 1];
+    // Only the highlight moves; the editor's selection is left alone. Selecting the folded-away
+    // original made WebKit move the selection itself, which revealed the original and lost the jump.
+    ed.view.dispatch(ed.state.tr.setMeta(pseudonymKey, { current: { from: next.from, to: next.to } }).setMeta("addToHistory", false));
+    lastManualScroll.current = performance.now();
+    // Centre the highlighted pseudonym (or the original, with pseudonyms off) in the transcript.
+    const el = box.querySelector<HTMLElement>(".anon-chip.current, .search-hit.current");
+    const c = el ? el.getBoundingClientRect() : ed.view.coordsAtPos(next.from);
+    const target = box.scrollTop + (c.top - r.top) - (r.height - (c.bottom - c.top)) / 2;
+    box.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+  }, []);
 
   const jumpDoubt = useCallback(
     (direction: 1 | -1) => {
@@ -423,7 +524,9 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
   const detailsRef = useRef(details);
   detailsRef.current = details;
 
-  const tags = useMemo(() => [...DEFAULT_TAGS[transcript.language], ...extras.customTags], [transcript.language, extras.customTags]);
+  const hiddenTags = useMemo(() => extras.hiddenTags ?? [], [extras.hiddenTags]);
+  const defaultTags = useMemo(() => DEFAULT_TAGS[transcript.language].filter((tag) => !hiddenTags.includes(tag)), [transcript.language, hiddenTags]);
+  const tags = useMemo(() => [...defaultTags, ...extras.customTags], [defaultTags, extras.customTags]);
   const tagsRef = useRef(tags);
   tagsRef.current = tags;
 
@@ -483,37 +586,6 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
     setSpeakerMenu(null);
   }, []);
 
-  const applyAnonymize = useCallback(() => {
-    const ed = editorRef.current;
-    if (!ed) return;
-    const edits: { from: number; to: number; text: string }[] = [];
-    ed.state.doc.forEach((turn, offset) => {
-      const text = turn.textContent;
-      const taken: [number, number][] = [];
-      for (const rule of mergeRules(rulesRef.current, studyRulesRef.current)) {
-        const re = wholeWord(rule.find);
-        if (!re) continue;
-        for (const m of text.matchAll(re)) {
-          const a = m.index;
-          const b = a + m[0].length;
-          if (taken.some(([x, y]) => a < y && b > x)) continue;
-          taken.push([a, b]);
-          edits.push({ from: offset + 1 + a, to: offset + 1 + b, text: rule.replace });
-        }
-      }
-    });
-    if (edits.length === 0) return;
-    edits.sort((a, b) => b.from - a.from);
-    let tr = ed.state.tr;
-    for (const e of edits) {
-      // Keep the audio link of the replaced word.
-      const marks = ed.state.doc.resolve(e.from + 1).marks();
-      if (e.text) tr = tr.replaceWith(e.from, e.to, ed.state.schema.text(e.text, marks));
-      else tr = tr.delete(e.from, e.to);
-    }
-    ed.view.dispatch(tr);
-    toast(t("editor.applied", { n: edits.length }), "ok", { label: t("common.undo"), run: () => ed.commands.undo() });
-  }, [toast, t]);
 
   // ---------------------------------------------------------------- quotes
   const addQuote = useCallback(() => {
@@ -622,27 +694,35 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
   );
   useEffect(() => () => window.clearTimeout(studySaveTimer.current), []);
 
-  const findCandidates = useCallback(() => {
-    const glossary = [...details.glossary, ...(study?.glossary ?? [])];
-    const ed = editorRef.current;
-    if (!ed) return;
-    const current = fromDoc(ed.state.doc, transcript, speakersRef.current);
-    const all = suggestCandidates(current, glossary, mergeRules(rulesRef.current, studyRulesRef.current));
-    setCandidates(all.filter((c) => !dismissed.current.has(c.term.toLowerCase())));
-  }, [details.glossary, study, transcript]);
-
-  const addCandidate = useCallback(
-    (c: Candidate) => {
-      const lang = transcript.language;
-      const existing = [...rulesRef.current, ...studyRulesRef.current];
-      const nameRules = existing.filter((r) => /^\[(naam|name) \d+\]$/.test(r.replace.trim())).length;
-      const rule = { find: c.term, replace: placeholderFor(c.kind, lang, nameRules + 1) };
-      // Names belong to the study: the same person comes up in other interviews too.
-      if (study) saveStudyRules([...studyRulesRef.current, rule]);
-      else saveExtras({ ...extras, anonymize: [...rulesRef.current, rule] });
-      setCandidates((list) => list?.filter((x) => x !== c) ?? null);
+  // ---------------------------------------------------------------- quote export
+  const [exportTab, setExportTab] = useState<ExportTab>("transcript");
+  const buildQuoteExport = useCallback(
+    (pseudo: boolean): QuoteExportItem[] => {
+      const rules = pseudo ? previewRules : [];
+      const nameOf = (id: string) => speakersRef.current.find((s) => s.id === id)?.name ?? id;
+      const ed = editorRef.current;
+      const current = ed ? fromDoc(ed.state.doc, transcript, speakersRef.current) : transcript;
+      return [...(extras.quotes ?? [])]
+        .sort((a, b) => a.s - b.s)
+        .map((q) => ({
+          projectId: project.id,
+          s: q.s,
+          e: q.e,
+          spans: pseudonymSpans(current, previewRules, q.s - 2, q.e + 2),
+          line: {
+            text: anonymizeText(q.text, rules),
+            participant: participantCodes(details, study) || anonymizeText(nameOf(q.speaker), rules),
+            interview: anonymizeText(details.name, rules),
+            time: formatClock(q.s + recordingOffset(details)),
+            note: anonymizeText(q.note, rules),
+          },
+        }));
     },
-    [study, extras, saveExtras, saveStudyRules, transcript.language],
+    [extras.quotes, previewRules, project.id, details, study, transcript],
+  );
+  const quoteSource = useMemo(
+    () => ({ name: details.name, count: extras.quotes?.length ?? 0, hasPseudonyms: previewRules.length > 0, build: buildQuoteExport }),
+    [details.name, extras.quotes, previewRules, buildQuoteExport],
   );
 
   // ---------------------------------------------------------------- keyboard
@@ -751,11 +831,18 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
   return (
     <Frame
       title={project.name}
-      subtitle={saveState === "saved" ? t("editor.saved") : t("editor.saving")}
+      subtitle={<SaveStatus state={saveState} at={savedAt} />}
       onBack={() => void leave({ name: "home" })}
       bodyClassName="flex min-h-0 flex-1 flex-col"
       actions={
         <>
+          <OfflineBadge />
+          <IconButton label={t("help.title")} onClick={() => void leave({ name: "help" })}>
+            <CircleHelp className="size-[18px]" />
+          </IconButton>
+          <IconButton label={t("common.settings")} onClick={() => void leave({ name: "settings" })}>
+            <SettingsIcon className="size-[18px]" />
+          </IconButton>
           <Menu
             trigger={
               <IconButton label={t("home.more")}>
@@ -767,7 +854,10 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
               {t("editor.retranscribe")}
             </MenuItem>
           </Menu>
-          <Button variant="primary" icon={<Download className="size-4" />} onClick={() => void flush().then(() => setExportOpen(true))}>
+          <Button variant="primary" icon={<Download className="size-4" />} onClick={() => void flush().then(() => {
+              setExportTab("transcript");
+              setExportOpen(true);
+            })}>
             {t("editor.export")}
           </Button>
         </>
@@ -829,6 +919,12 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
             <span className="tabular">{t("editor.reviewedProgress", { pct: reviewedPct })}</span>
           </button>
         </Tooltip>
+        <IconButton label={t("common.undo")} shortcut={`${MOD}+Z`} size="sm" onMouseDown={(e) => e.preventDefault()} onClick={() => editorRef.current?.commands.undo()}>
+          <Undo2 className="size-4" />
+        </IconButton>
+        <IconButton label={t("common.redo")} shortcut={`${MOD}+Shift+Z`} size="sm" onMouseDown={(e) => e.preventDefault()} onClick={() => editorRef.current?.commands.redo()}>
+          <Redo2 className="size-4" />
+        </IconButton>
         <IconButton label={t("quotes.add")} shortcut={`${MOD}+Q`} size="sm" onMouseDown={(e) => e.preventDefault()} onClick={addQuote}>
           <QuoteIcon className="size-4" />
         </IconButton>
@@ -874,11 +970,18 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
             {panel === "speakers" && <SpeakersPanel speakers={speakers} onRename={renameSpeaker} onAdd={addSpeaker} />}
             {panel === "tags" && (
               <TagsPanel
-                defaults={DEFAULT_TAGS[transcript.language]}
+                defaults={defaultTags}
                 custom={extras.customTags}
                 onInsert={insertTag}
                 onAdd={(tag) => saveExtras({ ...extras, customTags: [...extras.customTags, tag] })}
-                onRemove={(tag) => saveExtras({ ...extras, customTags: extras.customTags.filter((x) => x !== tag) })}
+                onRemove={(tag) =>
+                  saveExtras(
+                    extras.customTags.includes(tag)
+                      ? { ...extras, customTags: extras.customTags.filter((x) => x !== tag) }
+                      : { ...extras, hiddenTags: [...hiddenTags, tag] },
+                  )
+                }
+                onRestoreDefaults={hiddenTags.length > 0 ? () => saveExtras({ ...extras, hiddenTags: [] }) : undefined}
               />
             )}
             {panel === "anonymize" && (
@@ -888,16 +991,11 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
                 interviewRules={extras.anonymize}
                 studyCounts={anonCounts.study}
                 interviewCounts={anonCounts.interview}
-                candidates={candidates}
                 onStudyRules={saveStudyRules}
                 onInterviewRules={(rules: AnonymizeRule[]) => saveExtras({ ...extras, anonymize: rules })}
-                onSuggest={findCandidates}
-                onAddCandidate={addCandidate}
-                onDismissCandidate={(c) => {
-                  dismissed.current.add(c.term.toLowerCase());
-                  setCandidates((list) => list?.filter((x) => x !== c) ?? null);
-                }}
-                onApply={applyAnonymize}
+                showInText={showPseudonyms}
+                onShowInText={setShowPseudonyms}
+                onJump={jumpToTerm}
               />
             )}
             {panel === "quotes" && (
@@ -907,6 +1005,11 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
                 formatTime={(s) => formatClock(s + recordingOffset(details))}
                 onPlay={(q) => player.seek(q.s, true)}
                 onChange={(quotes) => saveExtras({ ...extras, quotes })}
+                onAdd={addQuote}
+                onExport={() => void flush().then(() => {
+                  setExportTab("quotes");
+                  setExportOpen(true);
+                })}
               />
             )}
             {panel === "details" && <InterviewDetails project={details} onChange={setDetails} compact />}
@@ -934,8 +1037,34 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
         rules={mergeRules(extras.anonymize, studyRules)}
         getTranscript={getTranscript}
         doubts={stats.doubts}
+        quotes={quoteSource}
+        tab={exportTab}
+        onTab={setExportTab}
       />
     </Frame>
+  );
+}
+
+type SaveState = "saved" | "saving" | "error";
+
+/** Save status under the title, like document apps show it: everything is saved automatically. */
+function SaveStatus({ state, at }: { state: SaveState; at: Date | null }) {
+  const t = useT();
+  const time = at ? at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
+  const tip = state === "error" ? t("editor.saveFailedHint") : time ? t("editor.savedAt", { time }) : t("editor.autoSaveHint");
+  return (
+    <Tooltip label={tip}>
+      <span className={cx("inline-flex items-center gap-1", state === "error" ? "text-danger" : "text-muted")}>
+        {state === "saving" ? (
+          <Loader2 className="size-3 animate-spin" aria-hidden />
+        ) : state === "error" ? (
+          <CircleAlert className="size-3" aria-hidden />
+        ) : (
+          <CircleCheck className="size-3" aria-hidden />
+        )}
+        {state === "saving" ? t("editor.saving") : state === "error" ? t("editor.saveFailed") : t("editor.autoSaved")}
+      </span>
+    </Tooltip>
   );
 }
 
@@ -1020,7 +1149,7 @@ function PlayerBar({
       <IconButton label={t("editor.back5")} shortcut="Alt+←" onClick={() => player.skip(-5)}>
         <RotateCcw className="size-[18px]" />
       </IconButton>
-      <Tooltip label={state.playing ? t("editor.pause") : t("editor.play")} shortcut="Esc">
+      <Tooltip label={state.playing ? t("editor.pause") : t("editor.play")} shortcut="Esc / ⏯">
         <button
           onClick={() => player.toggle()}
           aria-label={state.playing ? t("editor.pause") : t("editor.play")}

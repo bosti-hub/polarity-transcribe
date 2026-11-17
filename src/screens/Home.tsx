@@ -12,6 +12,7 @@ import {
   ScrollText,
   Layers,
   Mic,
+  CircleHelp,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -38,6 +39,7 @@ import type { Language, Project, Study } from "@/lib/types";
 import { ParticipantsTable } from "./Participants";
 import { DeleteStudyDialog, NewStudyDialog, StudySettingsDialog } from "./StudyDialogs";
 import { exportPseudonymKey, StudyExportDialog } from "./StudyExport";
+import type { ExportTab } from "@/editor/ExportDialog";
 import { MethodsDialog, StudyQuotes, StudySearch } from "./StudyTools";
 
 const TAB_LABELS = {
@@ -153,6 +155,7 @@ export function Home() {
   const [settingsOf, setSettingsOf] = useState<Study | null>(null);
   const [deletingStudy, setDeletingStudy] = useState<Study | null>(null);
   const [exportingStudy, setExportingStudy] = useState<Study | null>(null);
+  const [exportTab, setExportTab] = useState<ExportTab>("transcript");
 
   useEffect(() => setTab("interviews"), [library]);
 
@@ -217,7 +220,13 @@ export function Home() {
           <OfflineBadge />
           {study && (
             <>
-              <IconButton label={t("studyExport.title")} onClick={() => setExportingStudy(study)}>
+              <IconButton
+                label={t("studyExport.title")}
+                onClick={() => {
+                  setExportTab("transcript");
+                  setExportingStudy(study);
+                }}
+              >
                 <Download className="size-[18px]" />
               </IconButton>
               <IconButton label={t("library.studySettings")} onClick={() => setSettingsOf(study)}>
@@ -225,6 +234,9 @@ export function Home() {
               </IconButton>
             </>
           )}
+          <IconButton label={t("help.title")} onClick={() => go({ name: "help" })}>
+            <CircleHelp className="size-[18px]" />
+          </IconButton>
           <IconButton label={t("common.settings")} onClick={() => go({ name: "settings" })}>
             <SettingsIcon className="size-[18px]" />
           </IconButton>
@@ -240,7 +252,10 @@ export function Home() {
         onSelect={showLibrary}
         onNewStudy={() => setNewStudy(true)}
         onSettings={setSettingsOf}
-        onExport={setExportingStudy}
+        onExport={(s) => {
+          setExportTab("transcript");
+          setExportingStudy(s);
+        }}
         onMethods={setMethodsOf}
         onExportKey={(s) => {
           const lang = useApp.getState().settings.uiLanguage;
@@ -309,7 +324,14 @@ export function Home() {
           ) : study && tab === "participants" ? (
             <ParticipantsTable study={study} projects={inView} />
           ) : study && tab === "quotes" ? (
-            <StudyQuotes study={study} projects={inView} />
+            <StudyQuotes
+              study={study}
+              projects={inView}
+              onExport={() => {
+                setExportTab("quotes");
+                setExportingStudy(study);
+              }}
+            />
           ) : study && tab === "search" ? (
             <StudySearch study={study} projects={inView} />
           ) : inView.length === 0 ? (
@@ -333,6 +355,8 @@ export function Home() {
         study={exportingStudy}
         projects={(projects ?? []).filter((p) => p.studyId === exportingStudy?.id)}
         onClose={() => setExportingStudy(null)}
+        tab={exportTab}
+        onTab={setExportTab}
       />
       <DeleteStudyDialog study={deletingStudy} interviews={deletingStudy ? (counts[deletingStudy.id] ?? 0) : 0} onClose={() => setDeletingStudy(null)} onDone={reload} />
 

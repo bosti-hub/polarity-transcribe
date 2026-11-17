@@ -44,8 +44,36 @@ Supported build platforms are Windows x64 and macOS on Apple Silicon. Linux is n
 ### macOS
 
 - Xcode Command Line Tools (`xcode-select --install`). They provide clang, libclang and the Metal
-  toolchain.
+  toolchain. The full Xcode app is not needed.
 - CMake, for example via Homebrew (`brew install cmake`).
+- Rust's `aarch64-apple-darwin` target (installed by default on an Apple Silicon Mac).
+
+## macOS build environment
+
+Set the deployment target for every build, so whisper.cpp, the app and the FFmpeg sidecar all
+target the same minimum macOS version as `minimumSystemVersion` in `tauri.release.conf.json`:
+
+```sh
+export MACOSX_DEPLOYMENT_TARGET=13.3
+```
+
+Notes from the first macOS build (Apple M5, macOS 26, November 2026):
+
+- `crates/core/build.rs` links clang's runtime library (`libclang_rt.osx.a`) on macOS. The
+  prebuilt ONNX Runtime calls `__isPlatformVersionAtLeast` (from Objective-C `@available`);
+  debug builds get it from Rust's `compiler_builtins`, but release builds with LTO drop it and
+  the link fails with `Undefined symbols ... ___isPlatformVersionAtLeast`. Nothing to do by hand.
+- The linker warns that ONNX Runtime's objects were built for macOS 13.4 while the target is
+  13.3. The build works; it means the app is only verified for 13.4 and newer.
+- `scripts/build-ffmpeg.sh` must be executable in git (`100755`); it was committed from Windows
+  without that bit, which made `./scripts/build-ffmpeg.sh` fail here and in the macOS release
+  job.
+- No other changes were needed: typecheck, frontend tests and `cargo test -p pt-core` pass as
+  on Windows.
+- Speed on an Apple M5 (base GPU, Metal), large-v3-turbo q8_0: recognition about 16x real time,
+  the whole pipeline about 11x (a 5-minute recording in 26 seconds; a 2 h 22 min recording
+  with two microphones in 12 minutes including the import). For comparison: an RTX 5060 Ti
+  does about 56x.
 
 ## Windows build environment
 
@@ -91,7 +119,11 @@ order:
 For development, any reasonably recent FFmpeg on `PATH` works (for example `winget install ffmpeg`
 or `brew install ffmpeg`), or point `PT_FFMPEG` at one.
 
-Release builds ship a minimal, audio-only, LGPL-only FFmpeg as a Tauri sidecar. Build it with:
+Release builds ship a minimal, audio-only, LGPL-only FFmpeg as a Tauri sidecar. It includes
+LAME (LGPL) for MP3 quote fragments and the filters for voice anonymisation (`asetrate`, `atempo`,
+`vibrato`, `afftfilt`, `highpass`, `lowpass`, `acompressor`, `alimiter`), plus `aeval` to beep
+pseudonymised names out of fragments; both source tarballs are
+pinned by SHA-256. Build it with:
 
 ```sh
 scripts/build-ffmpeg.sh            # target triple defaults to the host
@@ -130,6 +162,19 @@ Release build on macOS (requires the FFmpeg sidecar, see above):
 ```sh
 npm run tauri build -- --features metal --config src-tauri/tauri.release.conf.json
 ```
+
+This writes `target/release/bundle/dmg/Polarity Transcribe_<version>_aarch64.dmg` (about
+14 MiB), ad-hoc signed, with FFmpeg in `Contents/MacOS/ffmpeg`. The release configuration
+creates signed update packages, which needs `TAURI_SIGNING_PRIVATE_KEY`. That key only lives on
+the release machine and in the GitHub secrets; for a local test build without it, switch the
+update packages off:
+
+```sh
+npm run tauri build -- --features metal --config src-tauri/tauri.release.conf.json --config '{"bundle":{"createUpdaterArtifacts":false}}'
+```
+
+To check that the bundled FFmpeg is used, start the app from Finder or with `open` (apps
+started that way do not get Homebrew's `PATH`) and import a recording.
 
 Release build on Windows (requires the FFmpeg sidecar, the Vulkan SDK and a short
 `CARGO_TARGET_DIR`, see above):
@@ -188,7 +233,19 @@ cargo run --release -p pt-cli -- run --in1 <file> [--in2 <file>] --lang nl
 ```
 
 The models are looked up in `models/` (gitignored); use `--model`, `--vad-model` and
-`--voice-model` to point elsewhere, and `--help` on each subcommand for all options. Setting
+`--voice-model` to point elsewhere, and `--help` on each subcommand for all options. The app
+downloads the speech and voice models into its data folder (on macOS
+`~/Library/Application Support/nl.polarity.transcribe/models`); the voice activity model is
+built into the app and is in `crates/core/assets`. Link them into `models/` to reuse them:
+
+```sh
+mkdir -p models
+ln -s ~/Library/Application\ Support/nl.polarity.transcribe/models/* models/
+ln -s ../crates/core/assets/ggml-silero-v5.1.2.bin models/
+```
+
+On macOS add `--features metal` to the `cargo run`/`cargo build` of `pt-cli` and pass `--gpu`;
+without them the harness runs on the processor. Setting
 `PT_KEEP_JOB=1` keeps the job folder after a successful run, so a second run with `--project <id>`
 skips recognition and only repeats the assembly of the transcript.
 

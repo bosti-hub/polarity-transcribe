@@ -110,6 +110,50 @@ export function anonymizeTranscript(t: Transcript, rules: AnonymizeRule[]): Anon
   return { transcript: { ...t, speakers, paragraphs }, counts };
 }
 
+/**
+ * When the pseudonymised words are spoken between `from` and `to` (seconds on the transcript
+ * timeline): one span per match, from the first matched word's start to the last one's end,
+ * merged where they touch. Used to beep them out of audio fragments.
+ */
+export function pseudonymSpans(t: Pick<Transcript, "paragraphs">, rules: AnonymizeRule[], from: number, to: number): [number, number][] {
+  const res = rules.map((r) => wholeWord(r.find)).filter((re): re is RegExp => re !== null);
+  if (res.length === 0) return [];
+  const spans: [number, number][] = [];
+  for (const p of t.paragraphs) {
+    if (p.end < from || p.start > to) continue;
+    // The words joined by spaces, with where each one starts (as the export matches them).
+    const words: { s: number; e: number; at: number; len: number }[] = [];
+    let text = "";
+    for (const it of p.items) {
+      if (it.k === "b") {
+        // A listening sound is short: beep all of it when it holds a name.
+        if (res.some((re) => new RegExp(re.source, re.flags).test(it.t))) spans.push([it.s, it.e]);
+        continue;
+      }
+      if (it.k !== "w") continue;
+      if (text) text += " ";
+      words.push({ s: it.s, e: it.e, at: text.length, len: it.t.length });
+      text += it.t;
+    }
+    for (const re of res) {
+      for (const m of text.matchAll(re)) {
+        const a = m.index;
+        const b = a + m[0].length;
+        const hit = words.filter((w) => w.at < b && w.at + w.len > a);
+        if (hit.length) spans.push([hit[0].s, hit[hit.length - 1].e]);
+      }
+    }
+  }
+  const inside = spans.filter(([s, e]) => e > from && s < to).sort((x, y) => x[0] - y[0]);
+  const out: [number, number][] = [];
+  for (const [s, e] of inside) {
+    const last = out[out.length - 1];
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+    else out.push([s, e]);
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ suggestions
 
 export type CandidateKind = "name" | "term" | "date" | "year" | "number" | "postcode" | "email" | "phone";

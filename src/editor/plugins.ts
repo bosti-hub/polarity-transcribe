@@ -4,7 +4,7 @@
 
 import { Extension } from "@tiptap/core";
 import type { Node as PMNode } from "@tiptap/pm/model";
-import { Plugin, PluginKey, type EditorState, type Transaction } from "@tiptap/pm/state";
+import { Plugin, PluginKey, TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { TimingAttrs } from "./schema";
 
@@ -281,3 +281,139 @@ export function selectionSpan(state: EditorState): { s: number; e: number; from:
   });
   return Number.isFinite(s) && e > s ? { s, e, from: first, to: last } : null;
 }
+
+// ------------------------------------------------------------------ pseudonyms in the text
+// Every match of a rule is shown as its pseudonym, in a distinct style, with the original as a
+// tooltip. The text itself is not changed (that only happens on export). When the cursor or the
+// selection touches a match, the original is shown instead, so it can be read and edited.
+
+export interface PseudonymRule {
+  find: string;
+  replace: string;
+}
+
+type Match = Range & { replace: string };
+
+interface PseudonymState {
+  on: boolean;
+  rules: PseudonymRule[];
+  /** Tooltip text for a pseudonym, given the original text. */
+  label: (original: string) => string;
+  matches: Match[];
+  /** The match the arrows in the panel jumped to: highlighted, but still shown as pseudonym. */
+  current: Range | null;
+  decos: DecorationSet;
+}
+
+export type PseudonymMeta = Partial<Pick<PseudonymState, "on" | "rules" | "label" | "current">>;
+
+export const pseudonymKey = new PluginKey<PseudonymState>("pseudonyms");
+
+/** Same matching as the export: whole words, case-insensitive, longest rule first, no overlaps. */
+export function pseudonymMatches(doc: PMNode, rules: PseudonymRule[]): Match[] {
+  const out: Match[] = [];
+  const res = rules
+    .map((r) => ({ rule: r, re: pseudonymRegex(r.find) }))
+    .filter((x): x is { rule: PseudonymRule; re: RegExp } => x.re !== null);
+  if (res.length === 0) return out;
+  doc.forEach((turn, offset) => {
+    const text = turn.textContent;
+    const taken: [number, number][] = [];
+    for (const { rule, re } of res) {
+      for (const m of text.matchAll(re)) {
+        const a = m.index;
+        const b = a + m[0].length;
+        if (taken.some(([x, y]) => a < y && b > x)) continue;
+        taken.push([a, b]);
+        out.push({ from: offset + 1 + a, to: offset + 1 + b, replace: rule.replace });
+      }
+    }
+  });
+  return out.sort((x, y) => x.from - y.from);
+}
+
+function pseudonymRegex(term: string): RegExp | null {
+  const core = term.trim();
+  if (!core) return null;
+  const escaped = core.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "giu");
+}
+
+/** True when the selection touches the match (the cursor right before or after it counts). */
+function touches(m: Range, from: number, to: number): boolean {
+  return from <= m.to && to >= m.from;
+}
+
+function buildPseudonyms(state: EditorState, s: Pick<PseudonymState, "on" | "matches" | "label" | "current">): DecorationSet {
+  const cur = s.current;
+  const isCurrent = (m: Range) => !!cur && m.from === cur.from && m.to === cur.to;
+  if (!s.on) {
+    // Pseudonyms switched off: a jump still marks the original it landed on.
+    return cur && cur.to <= state.doc.content.size ? DecorationSet.create(state.doc, [Decoration.inline(cur.from, cur.to, { class: "search-hit current" })]) : DecorationSet.empty;
+  }
+  if (s.matches.length === 0) return DecorationSet.empty;
+  const { from, to } = state.selection;
+  const decos: Decoration[] = [];
+  for (const m of s.matches) {
+    if (!isCurrent(m) && touches(m, from, to)) {
+      decos.push(Decoration.inline(m.from, m.to, { class: "anon-editing" }));
+      continue;
+    }
+    const original = state.doc.textBetween(m.from, m.to);
+    decos.push(Decoration.inline(m.from, m.to, { class: "anon-hidden" }));
+    decos.push(
+      Decoration.widget(
+        m.from,
+        (view, getPos) => {
+          const chip = document.createElement("span");
+          chip.className = (m.replace ? "anon-chip" : "anon-chip removed") + (isCurrent(m) ? " current" : "");
+          chip.textContent = m.replace || "—";
+          chip.title = s.label(original);
+          chip.contentEditable = "false";
+          // Clicking the pseudonym puts the cursor at the end of the original, which reveals it.
+          chip.addEventListener("mousedown", (e) => {
+            const pos = getPos();
+            if (pos === undefined) return;
+            e.preventDefault();
+            const end = Math.min(pos + (m.to - m.from), view.state.doc.content.size);
+            view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, end)));
+            view.focus();
+          });
+          return chip;
+        },
+        { side: -1, ignoreSelection: true, key: `anon-${m.replace}-${original}${isCurrent(m) ? "-current" : ""}` },
+      ),
+    );
+  }
+  return DecorationSet.create(state.doc, decos);
+}
+
+function pseudonymPlugin() {
+  return new Plugin<PseudonymState>({
+    key: pseudonymKey,
+    state: {
+      init: () => ({ on: false, rules: [], label: (t) => t, matches: [], current: null, decos: DecorationSet.empty }),
+      apply(tr, prev, old, state) {
+        const meta = tr.getMeta(pseudonymKey) as PseudonymMeta | undefined;
+        if (!meta && !tr.docChanged && !tr.selectionSet) return prev;
+        let next = { ...prev, ...meta };
+        // The jump highlight lasts until the person edits or really moves the cursor (focus changes
+        // re-read the same selection from the page; those keep it).
+        const moved = tr.selectionSet && !tr.selection.eq(old.selection);
+        if (!(meta && "current" in meta) && (tr.docChanged || moved)) next = { ...next, current: null };
+        if (meta?.rules || tr.docChanged) next = { ...next, matches: pseudonymMatches(tr.doc, next.rules) };
+        return { ...next, decos: buildPseudonyms(state, next) };
+      },
+    },
+    props: {
+      decorations: (state) => pseudonymKey.getState(state)?.decos ?? null,
+    },
+  });
+}
+
+export const Pseudonyms = Extension.create({
+  name: "pseudonyms",
+  addProseMirrorPlugins() {
+    return [pseudonymPlugin()];
+  },
+});

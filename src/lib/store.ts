@@ -10,7 +10,8 @@ export type Route =
   | { name: "setup"; id: string }
   | { name: "progress"; id: string }
   | { name: "editor"; id: string; at?: number }
-  | { name: "settings" };
+  | { name: "settings" }
+  | { name: "help" };
 
 export interface Toast {
   id: number;
@@ -60,6 +61,9 @@ interface AppState {
   queueImports: (projectId: string, paths: string[]) => void;
   takeImports: (projectId: string) => string[];
   go: (route: Route) => void;
+  /** Where Settings and the manual return to: the screen they were opened from. */
+  backRoute: Route;
+  goBack: () => void;
   updateSettings: (patch: Partial<Settings>) => void;
   refreshModels: () => Promise<void>;
   toast: (message: string, tone?: Toast["tone"], action?: Toast["action"]) => void;
@@ -143,7 +147,14 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
-  go: (route) => set({ route }),
+  go: (route) =>
+    set((s) => ({
+      route,
+      // Settings and the manual are side trips: remember where they were opened from.
+      backRoute: route.name === "settings" || route.name === "help" ? (s.route.name === "settings" || s.route.name === "help" ? s.backRoute : s.route) : s.backRoute,
+    })),
+  backRoute: { name: "home" },
+  goBack: () => set((s) => ({ route: s.backRoute })),
 
   updateSettings: (patch) => {
     const settings = { ...get().settings, ...patch };

@@ -4,7 +4,8 @@
 import { FolderDown } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Button, Dialog, Progress, Switch } from "@/components/ui";
-import { FormatOptions, FormatPicker, useNotation } from "@/editor/ExportDialog";
+import { useQuoteExport, type QuoteSource } from "@/components/QuoteExport";
+import { ExportTabs, FormatOptions, FormatPicker, useNotation, type ExportTab } from "@/editor/ExportDialog";
 import { EXTENSION, exportTranscript, prepare, type ExportFormat, type ExportOptions } from "@/export";
 import { sanitizeFileName } from "@/export/common";
 import { buildQdpx, type QdpxInterview } from "@/export/qdpx";
@@ -16,6 +17,7 @@ import { pickFolder } from "@/lib/platform";
 import { useApp } from "@/lib/store";
 import type { Project, Study } from "@/lib/types";
 import { participantsCsv } from "./Participants";
+import { studyQuoteItems, useStudyData } from "./StudyTools";
 
 /** A file name that is unique within one export. */
 function uniqueName(base: string, extension: string, used: Set<string>): string {
@@ -30,7 +32,22 @@ function join(dir: string, name: string): string {
   return dir.endsWith(sep) ? dir + name : dir + sep + name;
 }
 
-export function StudyExportDialog({ study, projects, onClose }: { study: Study | null; projects: Project[]; onClose: () => void }) {
+/** The quotes tab needs the extras for the quotes and the transcripts to find names in the audio. */
+const QUOTE_DATA = { extras: true, transcripts: true };
+
+export function StudyExportDialog({
+  study,
+  projects,
+  onClose,
+  tab,
+  onTab,
+}: {
+  study: Study | null;
+  projects: Project[];
+  onClose: () => void;
+  tab: ExportTab;
+  onTab: (tab: ExportTab) => void;
+}) {
   const t = useT();
   const uiLanguage = useApp((s) => s.settings.uiLanguage);
   const version = useApp((s) => s.info?.version ?? "");
@@ -47,6 +64,20 @@ export function StudyExportDialog({ study, projects, onClose }: { study: Study |
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   useEffect(() => setProgress(null), [study]);
+
+  // Quotes tab: the quotes of every transcribed interview in the study.
+  const quoteData = useStudyData(study ? projects : [], QUOTE_DATA);
+  const quoteSource = useMemo<QuoteSource>(
+    () => ({
+      name: study?.name ?? "",
+      count: quoteData && study ? studyQuoteItems(quoteData, study, false).length : 0,
+      hasPseudonyms: !!study && (study.pseudonyms.length > 0 || (quoteData ?? []).some((d) => (d.extras?.anonymize.length ?? 0) > 0)),
+      build: (pseudo) => (quoteData && study ? studyQuoteItems(quoteData, study, pseudo) : []),
+    }),
+    [quoteData, study],
+  );
+  const quoteExport = useQuoteExport(quoteSource, onClose);
+  const onQuotes = tab === "quotes";
 
   const ready = projects.filter((p) => p.status === "ready");
   const selected = useMemo(
@@ -111,7 +142,7 @@ export function StudyExportDialog({ study, projects, onClose }: { study: Study |
     }
   };
 
-  const busy = progress !== null;
+  const busy = progress !== null || quoteExport.busy;
   return (
     <Dialog
       open={study !== null}
@@ -122,24 +153,43 @@ export function StudyExportDialog({ study, projects, onClose }: { study: Study |
       dismissable={!busy}
       footer={
         <>
-          <span className="mr-auto text-xs text-muted">{t("studyExport.count", { n: selected.length, total: projects.length })}</span>
+          {!onQuotes && <span className="mr-auto text-xs text-muted">{t("studyExport.count", { n: selected.length, total: projects.length })}</span>}
           <Button variant="ghost" onClick={onClose} disabled={busy}>
             {t("common.cancel")}
           </Button>
-          <Button variant="primary" icon={<FolderDown className="size-4" />} loading={busy} disabled={selected.length === 0} onClick={() => void run()}>
-            {t("studyExport.choose")}
-          </Button>
+          {onQuotes ? (
+            <Button
+              variant="primary"
+              icon={<FolderDown className="size-4" />}
+              loading={quoteExport.busy}
+              disabled={quoteSource.count === 0}
+              onClick={() => void quoteExport.run().catch((e) => useApp.getState().toast(errorMessage(e), "error"))}
+            >
+              {quoteExport.busyLabel ?? t("quoteExport.export")}
+            </Button>
+          ) : (
+            <Button variant="primary" icon={<FolderDown className="size-4" />} loading={busy} disabled={selected.length === 0} onClick={() => void run()}>
+              {t("studyExport.choose")}
+            </Button>
+          )}
         </>
       }
     >
-      {busy ? (
+      <ExportTabs tab={tab} onTab={onTab} quotes={quoteSource.count} />
+      {onQuotes ? (
+        quoteSource.count === 0 ? (
+          <p className="py-6 text-center text-[13px] text-muted">{quoteData ? t("quoteExport.noneInStudy") : "…"}</p>
+        ) : (
+          quoteExport.form
+        )
+      ) : progress ? (
         <div className="flex flex-col gap-2 py-6">
           <span className="text-sm">{t("studyExport.working", { n: progress.done, total: progress.total })}</span>
           <Progress value={progress.total ? progress.done / progress.total : null} />
         </div>
       ) : (
         <div className="flex flex-col gap-4">
-          <FormatPicker value={format} onChange={setFormat} only={["docx", "maxqda", "nvivo", "txt", "md", "json"]} />
+          <FormatPicker value={format} onChange={setFormat} only={["docx", "maxqda", "nvivo", "csv", "txt", "md", "json"]} />
           <FormatOptions
             format={format}
             timestamps={timestamps}

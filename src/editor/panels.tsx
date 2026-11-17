@@ -1,15 +1,14 @@
 // The editor's side panels: speakers, annotations, anonymisation and info.
 
-import { ArrowUpToLine, Check, Play, Plus, Replace, ScanSearch, ShieldAlert, Trash2, X } from "lucide-react";
+import { ArrowUpToLine, ChevronLeft, ChevronRight, Download, Play, Plus, Quote as QuoteIcon, Replace, RotateCcw, ShieldAlert, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { Button, Callout, cx, IconButton, Kbd, TextInput } from "@/components/ui";
+import { Button, Callout, cx, IconButton, Kbd, Switch, TextInput } from "@/components/ui";
 import { useT } from "@/lib/i18n";
 import { formatDuration } from "@/lib/transcript";
-import type { Candidate } from "@/lib/anonymize";
 import type { AnonymizeRule, Quote, Speaker } from "@/lib/types";
 
-const isMac = navigator.platform.toLowerCase().includes("mac");
-export const MOD = isMac ? "⌘" : "Ctrl";
+export { MOD } from "@/lib/keys";
+import { MOD, orderKeys, shortcutLabel } from "@/lib/keys";
 
 function PanelTitle({ children, hint }: { children: React.ReactNode; hint?: React.ReactNode }) {
   return (
@@ -80,12 +79,16 @@ export function TagsPanel({
   onInsert,
   onAdd,
   onRemove,
+  onRestoreDefaults,
 }: {
+  /** Built-in labels still in the list. */
   defaults: string[];
   custom: string[];
   onInsert: (tag: string) => void;
   onAdd: (tag: string) => void;
   onRemove: (tag: string) => void;
+  /** Present when built-in labels were removed: puts them back. */
+  onRestoreDefaults?: () => void;
 }) {
   const t = useT();
   const [draft, setDraft] = useState("");
@@ -117,11 +120,9 @@ export function TagsPanel({
                 </span>
               )}
             </button>
-            {i >= defaults.length && (
-              <IconButton label={t("common.remove")} size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => onRemove(tag)}>
-                <X className="size-3.5" />
-              </IconButton>
-            )}
+            <IconButton label={t("common.remove")} size="sm" onClick={() => onRemove(tag)}>
+              <Trash2 className="size-3.5 text-danger" />
+            </IconButton>
           </div>
         ))}
       </div>
@@ -139,6 +140,11 @@ export function TagsPanel({
           <Plus className="size-4" />
         </IconButton>
       </div>
+      {onRestoreDefaults && (
+        <Button variant="ghost" size="sm" className="mt-2 -ml-1.5" icon={<RotateCcw className="size-3.5" />} onClick={onRestoreDefaults}>
+          {t("editor.restoreTags")}
+        </Button>
+      )}
     </div>
   );
 }
@@ -150,10 +156,13 @@ function RuleList({
   counts,
   onChange,
   onPromote,
+  onJump,
 }: {
   rules: AnonymizeRule[];
   counts: number[];
   onChange: (rules: AnonymizeRule[]) => void;
+  /** Select the previous or next place in the text where the term occurs. */
+  onJump: (find: string, direction: 1 | -1) => void;
   /** Move a rule to the study list (only for interview rules in a study). */
   onPromote?: (rule: AnonymizeRule) => void;
 }) {
@@ -179,7 +188,19 @@ function RuleList({
             <TextInput value={rule.replace} onChange={(e) => update(i, { replace: e.target.value })} placeholder={t("editor.replacePlaceholder")} aria-label={t("editor.replaceWith")} className="h-8" />
           </div>
           {rule.find.trim() && (
-            <div className={cx("mt-1.5 pl-5 text-xs", (counts[i] ?? 0) > 0 ? "text-fg-2" : "text-muted")}>{t("editor.matches", { n: counts[i] ?? 0 })}</div>
+            <div className={cx("mt-1 flex items-center gap-1 pl-5 text-xs", (counts[i] ?? 0) > 0 ? "text-fg-2" : "text-muted")}>
+              <span className="flex-1">{t("editor.matches", { n: counts[i] ?? 0 })}</span>
+              {(counts[i] ?? 0) > 0 && (
+                <>
+                  <IconButton label={t("editor.prevMatch")} size="sm" onClick={() => onJump(rule.find, -1)}>
+                    <ChevronLeft className="size-3.5" />
+                  </IconButton>
+                  <IconButton label={t("editor.nextMatch")} size="sm" onClick={() => onJump(rule.find, 1)}>
+                    <ChevronRight className="size-3.5" />
+                  </IconButton>
+                </>
+              )}
+            </div>
           )}
         </div>
       ))}
@@ -196,13 +217,11 @@ export function AnonymizePanel({
   interviewRules,
   studyCounts,
   interviewCounts,
-  candidates,
   onStudyRules,
   onInterviewRules,
-  onSuggest,
-  onAddCandidate,
-  onDismissCandidate,
-  onApply,
+  showInText,
+  onShowInText,
+  onJump,
 }: {
   /** Null when the interview is not in a study. */
   studyName: string | null;
@@ -210,14 +229,12 @@ export function AnonymizePanel({
   interviewRules: AnonymizeRule[];
   studyCounts: number[];
   interviewCounts: number[];
-  /** Null until the user asks for suggestions. */
-  candidates: Candidate[] | null;
   onStudyRules: (rules: AnonymizeRule[]) => void;
   onInterviewRules: (rules: AnonymizeRule[]) => void;
-  onSuggest: () => void;
-  onAddCandidate: (c: Candidate) => void;
-  onDismissCandidate: (c: Candidate) => void;
-  onApply: () => void;
+  /** Whether pseudonyms are shown in the text instead of the originals. */
+  showInText: boolean;
+  onShowInText: (on: boolean) => void;
+  onJump: (find: string, direction: 1 | -1) => void;
 }) {
   const t = useT();
   const total = [...studyCounts, ...interviewCounts].reduce((a, b) => a + b, 0);
@@ -225,18 +242,24 @@ export function AnonymizePanel({
     <div className="flex flex-col gap-5">
       <PanelTitle hint={t("editor.anonymizeHint")}>{t("editor.anonymize")}</PanelTitle>
 
+      <label className="-mt-2 flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-3 py-2">
+        <span className="text-[13px]">{t("editor.anonShowInText")}</span>
+        <Switch checked={showInText} onChange={onShowInText} label={t("editor.anonShowInText")} />
+      </label>
+
       {studyName !== null && (
         <section>
           <h4 className="mb-2 truncate text-xs font-semibold text-fg-2">
             {t("editor.anonStudy")}: {studyName}
           </h4>
-          <RuleList rules={studyRules} counts={studyCounts} onChange={onStudyRules} />
+          <RuleList rules={studyRules} counts={studyCounts} onChange={onStudyRules} onJump={onJump} />
         </section>
       )}
 
       <section>
         {studyName !== null && <h4 className="mb-2 text-xs font-semibold text-fg-2">{t("editor.anonInterview")}</h4>}
         <RuleList
+          onJump={onJump}
           rules={interviewRules}
           counts={interviewCounts}
           onChange={onInterviewRules}
@@ -251,44 +274,9 @@ export function AnonymizePanel({
         />
       </section>
 
-      <section>
-        <Button variant="soft" size="sm" icon={<ScanSearch className="size-3.5" />} onClick={onSuggest}>
-          {t("editor.anonSuggest")}
-        </Button>
-        {candidates && (
-          <div className="mt-2.5">
-            <h4 className="mb-1.5 text-xs font-semibold text-fg-2">{t("editor.anonSuggestions")}</h4>
-            {candidates.length === 0 ? (
-              <p className="text-xs text-muted">{t("editor.anonNoSuggestions")}</p>
-            ) : (
-              <ul className="flex flex-col gap-1">
-                {candidates.slice(0, 40).map((c) => (
-                  <li key={c.term} className="group flex items-center gap-1.5 rounded-lg px-1.5 py-1 hover:bg-surface-3">
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] font-medium">{c.term}</span>
-                      <span className="text-[11px] text-muted">
-                        {t(`editor.anonKind_${c.kind}`)} · {c.count}×
-                      </span>
-                    </span>
-                    <IconButton label={t("editor.anonDismiss")} size="sm" className="opacity-0 group-hover:opacity-100" onClick={() => onDismissCandidate(c)}>
-                      <X className="size-3.5" />
-                    </IconButton>
-                    <IconButton label={t("editor.anonAdd")} size="sm" onClick={() => onAddCandidate(c)}>
-                      <Plus className="size-3.5" />
-                    </IconButton>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-      </section>
 
       <div className="flex flex-col gap-2">
         {total > 0 && <p className="text-xs text-fg-2">{t("editor.anonTotal", { n: total })}</p>}
-        <Button variant="ghost" size="sm" className="-ml-1.5 self-start" icon={<Check className="size-3.5" />} disabled={total === 0} onClick={onApply}>
-          {t("editor.applyPermanent", { n: total })}
-        </Button>
         <Callout tone="warn" icon={<ShieldAlert />}>
           {t("editor.audioNote")}
         </Callout>
@@ -305,17 +293,34 @@ export function QuotesPanel({
   formatTime,
   onPlay,
   onChange,
+  onAdd,
+  onExport,
 }: {
   quotes: Quote[];
   speakerName: (id: string) => string;
   formatTime: (seconds: number) => string;
   onPlay: (q: Quote) => void;
   onChange: (quotes: Quote[]) => void;
+  /** Save the selected text as a quote (as the shortcut does). */
+  onAdd: () => void;
+  onExport: () => void;
 }) {
   const t = useT();
   return (
     <div>
-      <PanelTitle hint={t("quotes.hint", { key: `${MOD}+Q` })}>{t("quotes.title")}</PanelTitle>
+      <PanelTitle hint={t("quotes.hint", { key: shortcutLabel(`${MOD}+Q`) })}>{t("quotes.title")}</PanelTitle>
+      <div className="mb-3 flex flex-wrap gap-2">
+        {/* Keeps the selection in the transcript: the button must not take the focus on press. */}
+        <Button variant="secondary" size="sm" icon={<QuoteIcon className="size-3.5" />} onMouseDown={(e) => e.preventDefault()} onClick={onAdd}>
+          {t("quotes.add")}
+          <Kbd>{shortcutLabel(`${MOD}+Q`)}</Kbd>
+        </Button>
+        {quotes.length > 0 && (
+          <Button variant="secondary" size="sm" icon={<Download className="size-3.5" />} onClick={onExport}>
+            {t("quotes.exportN", { n: quotes.length })}
+          </Button>
+        )}
+      </div>
       {quotes.length === 0 ? (
         <p className="text-xs leading-relaxed text-muted">{t("quotes.empty")}</p>
       ) : (
@@ -381,18 +386,19 @@ export function InfoPanel({ words, duration, doubts, report }: { words: number; 
     [t("editor.words", { n: "" }).trim(), words.toLocaleString()],
     [t("editor.doubtsLeft", { n: "" }).trim(), doubts.toLocaleString()],
   ];
-  const shortcuts: [string, string[]][] = [
-    [t("editor.scPlay"), ["Esc"]],
-    [t("editor.scBack"), ["Alt", "←"]],
-    [t("editor.scSlow"), ["Alt", "↓ ↑"]],
-    [t("editor.scNextDoubt"), ["F8"]],
-    [t("editor.confirmWord"), [MOD, "Enter"]],
-    [t("editor.scLoop"), [MOD, "L"]],
-    [t("editor.scTag"), [MOD, "1–9"]],
-    [t("editor.scSplit"), ["Enter"]],
-    [t("editor.scMerge"), ["Backspace"]],
-    [t("editor.scFind"), [MOD, "F"]],
-    [t("editor.scReviewed"), [MOD, "Shift", "Enter"]],
+  // Each entry lists alternatives; each alternative is a list of keys pressed together.
+  const shortcuts: [string, string[][]][] = [
+    [t("editor.scPlay"), [["Esc"], ["⏯"]]],
+    [t("editor.scBack"), [["Alt", "←"]]],
+    [t("editor.scSlow"), [["Alt", "↓ ↑"]]],
+    [t("editor.scNextDoubt"), [["F8"]]],
+    [t("editor.confirmWord"), [[MOD, "Enter"]]],
+    [t("editor.scLoop"), [[MOD, "L"]]],
+    [t("editor.scTag"), [[MOD, "1–9"]]],
+    [t("editor.scSplit"), [["Enter"]]],
+    [t("editor.scMerge"), [["Backspace"]]],
+    [t("editor.scFind"), [[MOD, "F"]]],
+    [t("editor.scReviewed"), [[MOD, "Shift", "Enter"]]],
   ];
   return (
     <div>
@@ -435,12 +441,17 @@ export function InfoPanel({ words, duration, doubts, report }: { words: number; 
       <div className="mt-5">
         <PanelTitle>{t("editor.shortcuts")}</PanelTitle>
         <div className="flex flex-col gap-1.5 text-xs">
-          {shortcuts.map(([label, keys]) => (
+          {shortcuts.map(([label, alternatives]) => (
             <div key={label} className="flex items-center justify-between gap-2">
               <span className="text-fg-2">{label}</span>
-              <span className="flex shrink-0 gap-0.5">
-                {keys.map((k) => (
-                  <Kbd key={k}>{k}</Kbd>
+              <span className="flex shrink-0 items-center gap-0.5">
+                {alternatives.map((keys, i) => (
+                  <span key={i} className="contents">
+                    {i > 0 && <span className="px-1 text-muted">{t("common.or")}</span>}
+                    {orderKeys(keys).map((k) => (
+                      <Kbd key={k}>{k}</Kbd>
+                    ))}
+                  </span>
                 ))}
               </span>
             </div>

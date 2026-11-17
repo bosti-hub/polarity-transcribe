@@ -34,6 +34,12 @@ FFMPEG_SHA256_PINNED="de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc
 FFMPEG_SHA256="${FFMPEG_SHA256:-$FFMPEG_SHA256_PINNED}"
 FFMPEG_URL="https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
 
+# LAME (LGPL) for MP3 export of quote fragments. SHA-256 of lame-3.100.tar.gz as published by
+# the LAME project on SourceForge (the same value Homebrew and the major distributions pin).
+LAME_VERSION="3.100"
+LAME_SHA256="${LAME_SHA256:-ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e}"
+LAME_URL="https://downloads.sourceforge.net/project/lame/lame/${LAME_VERSION}/lame-${LAME_VERSION}.tar.gz"
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="$REPO_ROOT/src-tauri/binaries"
 BUILD_ROOT="${BUILD_ROOT:-$REPO_ROOT/target/ffmpeg-build}"
@@ -87,7 +93,7 @@ esac
 OUT="$OUT_DIR/ffmpeg-${TRIPLE}${EXE_SUFFIX}"
 STAMP="$OUT_DIR/.ffmpeg-${TRIPLE}.stamp"
 SCRIPT_HASH="$(sha256_of "${BASH_SOURCE[0]}")"
-STAMP_CONTENT="ffmpeg=${FFMPEG_VERSION} script=${SCRIPT_HASH}"
+STAMP_CONTENT="ffmpeg=${FFMPEG_VERSION} lame=${LAME_VERSION} script=${SCRIPT_HASH}"
 
 print_size() {
   local bytes
@@ -121,10 +127,23 @@ else
   log "warning: no pinned SHA-256; tarball hash is $ACTUAL_SHA (pin it in FFMPEG_SHA256_PINNED)"
 fi
 
+LAME_TARBALL="$BUILD_ROOT/lame-${LAME_VERSION}.tar.gz"
+if [ ! -f "$LAME_TARBALL" ]; then
+  log "downloading $LAME_URL"
+  curl -fL --retry 3 -o "$LAME_TARBALL.part" "$LAME_URL"
+  mv "$LAME_TARBALL.part" "$LAME_TARBALL"
+fi
+LAME_ACTUAL="$(sha256_of "$LAME_TARBALL")"
+[ "$LAME_ACTUAL" = "$LAME_SHA256" ] || { rm -f "$LAME_TARBALL"; die "SHA-256 mismatch for $LAME_TARBALL (got $LAME_ACTUAL)"; }
+log "LAME SHA-256 verified"
+
 SRC_DIR="$BUILD_ROOT/ffmpeg-${FFMPEG_VERSION}"
 BUILD_DIR="$BUILD_ROOT/build-${TRIPLE}"
-rm -rf "$SRC_DIR" "$BUILD_DIR"
+LAME_SRC="$BUILD_ROOT/lame-${LAME_VERSION}"
+LAME_PREFIX="$BUILD_DIR/lame"
+rm -rf "$SRC_DIR" "$BUILD_DIR" "$LAME_SRC"
 tar -xJf "$TARBALL" -C "$BUILD_ROOT"
+tar -xzf "$LAME_TARBALL" -C "$BUILD_ROOT"
 mkdir -p "$BUILD_DIR"
 
 # ---------------------------------------------------------------------------------------------
@@ -137,10 +156,16 @@ DECODERS="aac,aac_latm,mp3,mp3float,mp2,mp2float,flac,vorbis,opus,alac,amrnb,amr
 DECODERS="$DECODERS,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,pcm_f64le,pcm_u8,pcm_s16be,pcm_s24be"
 DECODERS="$DECODERS,pcm_alaw,pcm_mulaw,adpcm_ima_wav,adpcm_ms"
 PARSERS="aac,aac_latm,mpegaudio,flac,vorbis,opus,ac3"
-ENCODERS="aac,pcm_f32le,pcm_s16le"
+# libmp3lame: MP3 quote fragments.
+ENCODERS="aac,pcm_f32le,pcm_s16le,libmp3lame"
 # Raw PCM muxers are called pcm_* in configure (on the command line: -f f32le / -f s16le).
-MUXERS="mp4,ipod,pcm_f32le,pcm_s16le,wav"
-FILTERS="aformat,aresample,pan,anull,atrim,asetpts,amerge,volume"
+MUXERS="mp4,ipod,pcm_f32le,pcm_s16le,wav,mp3"
+# Voice anonymisation for quote fragments: asetrate + atempo shift pitch and formants, vibrato
+# makes that shift vary over time, afftfilt randomises the phase (whisper mode), highpass/lowpass
+# limit the band and acompressor/alimiter make the result clear and loud. aeval puts a beep over
+# pseudonymised names.
+FILTERS="aformat,aresample,pan,anull,atrim,asetpts,amerge,volume,asetrate,atempo,afftfilt,highpass,lowpass"
+FILTERS="$FILTERS,vibrato,acompressor,alimiter,aeval"
 
 CONFIGURE_ARGS=(
   --prefix="$BUILD_DIR/install"
@@ -167,6 +192,7 @@ CONFIGURE_ARGS=(
   --enable-encoder="$ENCODERS"
   --enable-muxer="$MUXERS"
   --enable-filter="$FILTERS"
+  --enable-libmp3lame
 )
 # Deliberately NOT passed: --enable-gpl, --enable-version3, --enable-nonfree.
 
@@ -201,6 +227,33 @@ case "$TRIPLE" in
     ;;
 esac
 
+# ---------------------------------------------------------------------------------------------
+# LAME, static, for libmp3lame (LGPL; only the encoder library, no frontend or decoder)
+# ---------------------------------------------------------------------------------------------
+log "building LAME ${LAME_VERSION}"
+(
+  cd "$LAME_SRC"
+  LAME_ARGS=(--prefix="$LAME_PREFIX" --enable-static --disable-shared --disable-frontend --disable-decoder --disable-gtktest)
+  case "$TRIPLE" in
+    *-apple-darwin)
+      LAME_ARGS+=(CC=clang)
+      # LAME's config.sub predates arm64 names; only say --host when cross-compiling.
+      [ "$CLANG_ARCH" != "$(uname -m)" ] && LAME_ARGS+=(--host="${CLANG_ARCH/arm64/aarch64}-apple-darwin")
+      ;;
+  esac
+  CFLAGS="-O2 $EXTRA_CFLAGS" LDFLAGS="$EXTRA_LDFLAGS" ./configure "${LAME_ARGS[@]}" >"$BUILD_DIR/lame-configure.log" 2>&1 || {
+    tail -n 40 "$BUILD_DIR/lame-configure.log" >&2
+    exit 1
+  }
+  make -j"$JOBS" >"$BUILD_DIR/lame-make.log" 2>&1 && make install >>"$BUILD_DIR/lame-make.log" 2>&1 || {
+    tail -n 60 "$BUILD_DIR/lame-make.log" >&2
+    exit 1
+  }
+)
+[ -f "$LAME_PREFIX/lib/libmp3lame.a" ] || die "LAME build finished but libmp3lame.a is missing"
+EXTRA_CFLAGS="$EXTRA_CFLAGS -I$LAME_PREFIX/include"
+EXTRA_LDFLAGS="$EXTRA_LDFLAGS -L$LAME_PREFIX/lib"
+
 CONFIGURE_ARGS+=(--extra-cflags="$EXTRA_CFLAGS" --extra-ldflags="$EXTRA_LDFLAGS")
 
 log "configuring FFmpeg ${FFMPEG_VERSION} for ${TRIPLE}"
@@ -227,11 +280,14 @@ case "$LICENSE_LINE" in
   *"LGPL version 2.1 or later"*) log "license: LGPL version 2.1 or later" ;;
   *) die "unexpected FFmpeg license: '${LICENSE_LINE}'" ;;
 esac
-# No external libraries should have slipped in (autodetect is off, but be explicit).
-if grep -Eq '^#define CONFIG_(LIB[A-Z0-9_]+|ZLIB|BZLIB|LZMA|ICONV|SDL2|SCHANNEL|SECURETRANSPORT|AUDIOTOOLBOX|VIDEOTOOLBOX|AVFOUNDATION|COREIMAGE|APPKIT) 1' "$CONFIG_H"; then
-  grep -E '^#define CONFIG_(LIB[A-Z0-9_]+|ZLIB|BZLIB|LZMA|ICONV|SDL2|SCHANNEL|SECURETRANSPORT|AUDIOTOOLBOX|VIDEOTOOLBOX|AVFOUNDATION|COREIMAGE|APPKIT) 1' "$CONFIG_H" >&2
-  die "external libraries enabled; expected none"
+# No external libraries other than LAME (LGPL) should have slipped in (autodetect is off, but
+# be explicit).
+EXTERNAL_RE='^#define CONFIG_(LIB[A-Z0-9_]+|ZLIB|BZLIB|LZMA|ICONV|SDL2|SCHANNEL|SECURETRANSPORT|AUDIOTOOLBOX|VIDEOTOOLBOX|AVFOUNDATION|COREIMAGE|APPKIT) 1'
+if grep -E "$EXTERNAL_RE" "$CONFIG_H" | grep -Ev 'CONFIG_LIBMP3LAME ' | grep -q .; then
+  grep -E "$EXTERNAL_RE" "$CONFIG_H" | grep -Ev 'CONFIG_LIBMP3LAME ' >&2
+  die "external libraries enabled; expected only LAME"
 fi
+grep -Eq '^#define CONFIG_LIBMP3LAME 1' "$CONFIG_H" || die "libmp3lame is not enabled"
 
 # ---------------------------------------------------------------------------------------------
 # Build
@@ -275,6 +331,11 @@ if "$OUT" -hide_banner -version >/dev/null 2>&1; then
   "$OUT" -hide_banner -nostdin -v error -i "$TEST_DIR/out.m4a" -map 0:a:0 -vn -sn -dn     -af "aformat=channel_layouts=stereo,pan=mono|c0=0.5*c0+0.5*c1,volume=1.5" -ar 16000 -f f32le "$TEST_DIR/out.f32"     || die "self-test failed: could not decode AAC/MP4 to float PCM"
   BYTES=$(wc -c <"$TEST_DIR/out.f32" | tr -d ' ')
   [ "$BYTES" -ge 60000 ] || die "self-test failed: decoded output is too short (${BYTES} bytes)"
+  #   3. a quote fragment: MP3 with the voice anonymisation filter chain (as in the app)
+  "$OUT" -hide_banner -nostdin -v error -y -i "$TEST_DIR/out.m4a" -vn \
+    -af "aresample=44100,asetrate=37044,aresample=44100,atempo=1.190476,vibrato=f=0.35:d=0.08,highpass=f=150,lowpass=f=6000,acompressor=threshold=-26dB:ratio=5:attack=5:release=150:makeup=8,alimiter=limit=0.95,afftfilt=real='hypot(re,im)*cos(2*PI*random(0))':imag='hypot(re,im)*sin(2*PI*random(1))':win_size=512:overlap=0.75,aeval=exprs='if(between(t,0.2,0.5),0.2*sin(2*PI*1000*t),val(ch))'" \
+    -c:a libmp3lame -b:a 128k "$TEST_DIR/out.mp3" \
+    || die "self-test failed: could not encode an MP3 with the voice filter"
   log "self-test passed"
   rm -rf "$TEST_DIR"
 fi

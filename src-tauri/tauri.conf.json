@@ -44,6 +44,7 @@
       "icons/icon.ico"
     ],
     "category": "Productivity",
+    "copyright": "© 2026 Floris Bos, OnPolarity.com",
     "shortDescription": "Offline interview transcription",
     "longDescription": "Verbatim, fully offline transcription of research interviews in Dutch and English.",
     "windows": {

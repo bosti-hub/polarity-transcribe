@@ -9,7 +9,11 @@ import { api, errorMessage } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { interviewDate, isoDay } from "@/lib/interviews";
 import { useApp } from "@/lib/store";
+import { NewStudyDialog } from "@/screens/StudyDialogs";
 import type { Project, ProjectPatch, Review } from "@/lib/types";
+
+/** Option value in the study list that opens the new-study dialog. */
+const NEW_STUDY = "__new__";
 
 const fail = (e: unknown) => useApp.getState().toast(errorMessage(e), "error");
 
@@ -68,6 +72,7 @@ export function InterviewDetails({
   const [interviewer, setInterviewer] = useState(project.interviewer);
   const [notes, setNotes] = useState(project.notes);
   const [tagDraft, setTagDraft] = useState("");
+  const [newStudyOpen, setNewStudyOpen] = useState(false);
   useEffect(() => setInterviewer(project.interviewer), [project.id]);
   useEffect(() => setNotes(project.notes), [project.id]);
 
@@ -132,14 +137,20 @@ export function InterviewDetails({
   return (
     <div className={cx("grid gap-x-8 gap-y-5", !compact && "md:grid-cols-2")}>
       <Field label={t("interview.study")}>
-        <Select value={project.studyId ?? ""} onChange={(e) => void moveToStudy(e.target.value)} className="w-full">
+        <Select
+          value={project.studyId ?? ""}
+          onChange={(e) => (e.target.value === NEW_STUDY ? setNewStudyOpen(true) : void moveToStudy(e.target.value))}
+          className="w-full"
+        >
           <option value="">{t("library.noStudy")}</option>
           {studies.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>
           ))}
+          <option value={NEW_STUDY}>{t("interview.newStudy")}</option>
         </Select>
+        <NewStudyDialog open={newStudyOpen} onClose={() => setNewStudyOpen(false)} onCreated={(s) => void moveToStudy(s.id)} />
       </Field>
 
       <div className="flex flex-col gap-1.5">

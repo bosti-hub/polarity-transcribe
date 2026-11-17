@@ -1,14 +1,14 @@
 // Recording setup: import one or two recordings, choose start and end, set options and start
 // the transcription. Trim editing itself lives in components/setup/TrimPanel + Waveform.
 
-import { AlertCircle, AudioLines, Clock, Download, Info, Pencil } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, AudioLines, Clock, Download, Info, Pencil } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Frame, OfflineBadge } from "@/components/Frame";
 import { InterviewDetails } from "@/components/InterviewDetails";
 import { Options, type PatchFn } from "@/components/setup/Options";
 import { Recordings, type ImportState } from "@/components/setup/Recordings";
 import { TrimPanel } from "@/components/setup/TrimPanel";
-import { Button, Callout, Dialog, Spinner, Tooltip } from "@/components/ui";
+import { Button, Callout, cx, Dialog, Spinner, Tooltip } from "@/components/ui";
 import { TimelineModel } from "@/components/Waveform";
 import { api, errorMessage, events } from "@/lib/api";
 import { useT } from "@/lib/i18n";
@@ -66,6 +66,7 @@ export function Setup({ projectId }: { projectId: string }) {
   const [imports, setImportsState] = useState<Imports>({});
   const [dropHover, setDropHover] = useState(false);
   const [model] = useState(() => new TimelineModel());
+  const [step, setStep] = useState<Step>("audio");
   const [selected, setSelected] = useState<number | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -284,8 +285,13 @@ export function Setup({ projectId }: { projectId: string }) {
             </Callout>
           )}
 
-          <h1 className="text-[22px] font-semibold tracking-tight text-fg">{t("setup.title")}</h1>
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h1 className="text-[22px] font-semibold tracking-tight text-fg">{step === "audio" ? t("setup.title") : t("setup.options")}</h1>
+            <StepIndicator step={step} onStep={(s) => (s === "audio" || hasSource) && setStep(s)} />
+          </div>
 
+          {step === "audio" && (
+          <>
           <Recordings
             project={project}
             imports={imports}
@@ -303,19 +309,30 @@ export function Setup({ projectId }: { projectId: string }) {
               <TrimPanel project={project} model={model} />
             </Section>
           )}
+          </>
+          )}
 
-          <Section title={t("setup.options")}>
-            <Options project={project} onPatch={patch} />
-          </Section>
+          {step === "options" && (
+            <>
+              <Section title={t("setup.options")}>
+                <Options project={project} onPatch={patch} />
+              </Section>
 
-          <Section title={t("interview.title")}>
-            <InterviewDetails project={project} onChange={applyProject} />
-          </Section>
+              <Section title={t("interview.title")}>
+                <InterviewDetails project={project} onChange={applyProject} />
+              </Section>
+            </>
+          )}
         </div>
       </div>
 
       <footer className="shrink-0 border-t border-line bg-surface">
         <div className="mx-auto flex w-full max-w-[1040px] items-center gap-4 px-6 py-3">
+          {step === "options" && (
+            <Button variant="ghost" size="lg" icon={<ArrowLeft className="size-[18px]" />} onClick={() => setStep("audio")}>
+              {t("setup.backToAudio")}
+            </Button>
+          )}
           <div className="min-w-0 flex-1">
             {!model_ ? (
               <Callout tone="warn" icon={<Download />}>
@@ -338,9 +355,16 @@ export function Setup({ projectId }: { projectId: string }) {
               </div>
             ) : null}
           </div>
-          <Button variant="primary" size="lg" icon={<AudioLines className="size-[18px]" />} disabled={!canStart} loading={starting} onClick={onStart}>
-            {t("setup.start")}
-          </Button>
+          {step === "audio" ? (
+            <Button variant="primary" size="lg" disabled={!hasSource} onClick={() => setStep("options")}>
+              {t("setup.toOptions")}
+              <ArrowRight className="size-[18px]" />
+            </Button>
+          ) : (
+            <Button variant="primary" size="lg" icon={<AudioLines className="size-[18px]" />} disabled={!canStart} loading={starting} onClick={onStart}>
+              {t("setup.start")}
+            </Button>
+          )}
         </div>
       </footer>
 
@@ -371,6 +395,35 @@ export function Setup({ projectId }: { projectId: string }) {
 }
 
 // ------------------------------------------------------------------ pieces
+
+type Step = "audio" | "options";
+
+/** "1 Audio · 2 Options": where you are, and a way back. */
+function StepIndicator({ step, onStep }: { step: Step; onStep: (step: Step) => void }) {
+  const t = useT();
+  const steps: { id: Step; label: string }[] = [
+    { id: "audio", label: t("setup.stepAudio") },
+    { id: "options", label: t("setup.options") },
+  ];
+  return (
+    <ol className="flex items-center gap-2 text-[13px]">
+      {steps.map((s, i) => (
+        <li key={s.id} className="flex items-center gap-2">
+          {i > 0 && <span className="h-px w-5 bg-line-strong" aria-hidden />}
+          <button
+            type="button"
+            onClick={() => onStep(s.id)}
+            aria-current={step === s.id ? "step" : undefined}
+            className={cx("flex items-center gap-1.5 rounded-full px-2 py-0.5", step === s.id ? "bg-accent-soft font-medium text-accent" : "text-muted hover:text-fg")}
+          >
+            <span className={cx("flex size-5 items-center justify-center rounded-full text-[11px]", step === s.id ? "bg-accent text-accent-fg" : "bg-surface-3")}>{i + 1}</span>
+            {s.label}
+          </button>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
   return (

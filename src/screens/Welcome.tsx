@@ -1,7 +1,7 @@
 // First-run onboarding: introduce the app, pick a language, then install a speech model.
 
 import { AlertTriangle, ArrowRight, AudioLines, Lock, Mic2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { ModelManager } from "@/components/ModelManager";
 import { Button, Callout, cx, Segmented } from "@/components/ui";
@@ -9,20 +9,27 @@ import { useT } from "@/lib/i18n";
 import { activeModel, useApp } from "@/lib/store";
 import type { Language } from "@/lib/types";
 
-/** App mark: five rounded bars like a waveform on an accent square. */
+/** App mark ("two voices"), same drawing as src-tauri/icons/icon.svg: a square split into a
+ *  navy and a cream half, one per speaker, with the turn as an oxblood bar on the seam.
+ *  Fixed brand colours, so it looks the same in light and dark mode. */
+const NAVY = "#12243A";
+const CREAM = "#F8F4EC";
+const OXBLOOD = "#7A2332";
+
 export function LogoMark({ className }: { className?: string }) {
   const bars = [
-    { x: 9, h: 10 },
-    { x: 15, h: 18 },
-    { x: 21, h: 26 },
-    { x: 27, h: 16 },
-    { x: 33, h: 8 },
+    { x: 7.3, h: 9.9, fill: CREAM },
+    { x: 13.7, h: 21.4, fill: CREAM },
+    { x: 22.1, h: 29.1, fill: OXBLOOD },
+    { x: 30.4, h: 18, fill: NAVY },
+    { x: 36.9, h: 8.1, fill: NAVY },
   ];
   return (
     <svg viewBox="0 0 48 48" aria-hidden className={cx("size-12", className)}>
-      <rect width="48" height="48" rx="13" className="fill-accent" />
+      <path d="M11.1 0H24V48H11.1A11.1 11.1 0 0 1 0 36.9V11.1A11.1 11.1 0 0 1 11.1 0Z" fill={NAVY} />
+      <path d="M24 0H36.9A11.1 11.1 0 0 1 48 11.1V36.9A11.1 11.1 0 0 1 36.9 48H24Z" fill={CREAM} />
       {bars.map((b) => (
-        <rect key={b.x} x={b.x} y={24 - b.h / 2} width="4" height={b.h} rx="2" className="fill-accent-fg" />
+        <rect key={b.x} x={b.x} y={24 - b.h / 2} width="3.9" height={b.h} rx="1.95" fill={b.fill} />
       ))}
     </svg>
   );
@@ -44,6 +51,28 @@ export function Welcome() {
 
   const hasModel = activeModel(models, settings) !== null;
   const finish = () => updateSettings({ onboarded: true });
+
+  // First start: suggest the system's language (the webview reports the OS/user preference).
+  // Once the person picks one, that choice stands.
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("pt.languageChosen")) return;
+    } catch {
+      // No storage: still suggest the system language.
+    }
+    const system: Language = (navigator.languages?.[0] ?? navigator.language ?? "").toLowerCase().startsWith("nl") ? "nl" : "en";
+    if (system !== settings.uiLanguage) updateSettings({ uiLanguage: system });
+    // Only on first render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const chooseLanguage = (v: Language) => {
+    try {
+      localStorage.setItem("pt.languageChosen", "1");
+    } catch {
+      // Remembering is a convenience only; the setting itself is saved.
+    }
+    updateSettings({ uiLanguage: v });
+  };
 
   return (
     <div className="flex h-full overflow-y-auto bg-bg">
@@ -75,7 +104,7 @@ export function Welcome() {
                     size="sm"
                     value={settings.uiLanguage}
                     options={LANGUAGE_OPTIONS}
-                    onChange={(v) => updateSettings({ uiLanguage: v })}
+                    onChange={chooseLanguage}
                   />
                 </div>
               </div>

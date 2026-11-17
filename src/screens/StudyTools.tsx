@@ -1,16 +1,16 @@
 // Study-wide tools in the library: all saved quotes, search across every transcript, and a
 // generated methods paragraph.
 
-import { Copy, Download, FileText, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Copy, Download, Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Dialog, Segmented, Spinner, Switch } from "@/components/ui";
-import { quotesCsv, quotesDocx, type QuoteLine } from "@/export/quotes";
-import { anonymizeText, mergeRules, wholeWord } from "@/lib/anonymize";
+import type { QuoteExportItem } from "@/components/QuoteExport";
+import { anonymizeText, mergeRules, pseudonymSpans, wholeWord } from "@/lib/anonymize";
 import { api, errorMessage } from "@/lib/api";
 import { translate, useT } from "@/lib/i18n";
 import { interviewDate, participantCodes, recordingOffset } from "@/lib/interviews";
-import { pickSavePath } from "@/lib/platform";
 import { useApp } from "@/lib/store";
+import { MOD, shortcutLabel } from "@/lib/keys";
 import { methodsText, type MethodsFacts } from "@/lib/methods";
 import { formatClock, itemText, speakerName } from "@/lib/transcript";
 import type { Language, Project, ProjectExtras, Study, Transcript } from "@/lib/types";
@@ -18,7 +18,7 @@ import type { Language, Project, ProjectExtras, Study, Transcript } from "@/lib/
 const fail = (e: unknown) => useApp.getState().toast(errorMessage(e), "error");
 
 /** Transcripts and extras of the transcribed interviews, loaded once per view. */
-function useStudyData(projects: Project[], need: { transcripts?: boolean; extras?: boolean }) {
+export function useStudyData(projects: Project[], need: { transcripts?: boolean; extras?: boolean }) {
   const ready = useMemo(() => projects.filter((p) => p.status === "ready"), [projects]);
   const key = ready.map((p) => `${p.id}:${p.updatedAt}`).join();
   const [data, setData] = useState<{ project: Project; transcript?: Transcript; extras?: ProjectExtras }[] | null>(null);
@@ -46,46 +46,40 @@ function openAt(projectId: string, at: number) {
 
 // ------------------------------------------------------------------ quotes
 
-export function StudyQuotes({ study, projects }: { study: Study; projects: Project[] }) {
-  const t = useT();
-  const lang = useApp((s) => s.settings.uiLanguage);
-  const data = useStudyData(projects, { extras: true });
-  const [pseudonymise, setPseudonymise] = useState(true);
-
-  const lines = useMemo(() => {
-    if (!data) return null;
-    const out: (QuoteLine & { projectId: string; s: number; date: number })[] = [];
-    for (const { project, extras } of data) {
-      const rules = pseudonymise ? mergeRules(extras?.anonymize ?? [], study.pseudonyms) : [];
-      for (const q of extras?.quotes ?? []) {
-        out.push({
-          projectId: project.id,
-          s: q.s,
-          date: interviewDate(project).getTime(),
+/** All quotes of a study, sorted by participant, date and time; pseudonymised or not. */
+export function studyQuoteItems(data: { project: Project; transcript?: Transcript; extras?: ProjectExtras }[], study: Study, pseudo: boolean): QuoteExportItem[] {
+  const out: (QuoteExportItem & { date: number })[] = [];
+  for (const { project, transcript, extras } of data) {
+    const all = mergeRules(extras?.anonymize ?? [], study.pseudonyms);
+    const rules = pseudo ? all : [];
+    for (const q of extras?.quotes ?? []) {
+      out.push({
+        projectId: project.id,
+        s: q.s,
+        e: q.e,
+        // Without the transcript (the study's quote list), nothing to beep.
+        spans: transcript ? pseudonymSpans(transcript, all, q.s - 2, q.e + 2) : [],
+        date: interviewDate(project).getTime(),
+        line: {
           text: anonymizeText(q.text, rules),
           participant: participantCodes(project, study),
           interview: anonymizeText(project.name, rules),
           time: formatClock(q.s + recordingOffset(project)),
           note: anonymizeText(q.note, rules),
-        });
-      }
+        },
+      });
     }
-    return out.sort((a, b) => a.participant.localeCompare(b.participant) || a.date - b.date || a.s - b.s);
-  }, [data, study, pseudonymise]);
+  }
+  return out.sort((a, b) => a.line.participant.localeCompare(b.line.participant) || a.date - b.date || a.s - b.s);
+}
 
-  const save = async (kind: "docx" | "csv") => {
-    if (!lines?.length) return;
-    try {
-      const title = `${study.name} - ${t("quotes.title").toLowerCase()}`;
-      const path = await pickSavePath(`${title}.${kind}`, kind);
-      if (!path) return;
-      const bytes = kind === "docx" ? await quotesDocx(`${study.name}: ${t("quotes.title").toLowerCase()}`, lines) : new TextEncoder().encode(quotesCsv(lines, lang));
-      await api.writeFile(path, bytes);
-      useApp.getState().toast(t("export.saved", { path }), "ok", { label: t("export.show"), run: () => void api.revealInFolder(path) });
-    } catch (e) {
-      fail(e);
-    }
-  };
+export function StudyQuotes({ study, projects, onExport }: { study: Study; projects: Project[]; onExport: () => void }) {
+  const t = useT();
+  const data = useStudyData(projects, { extras: true });
+  const [pseudonymise, setPseudonymise] = useState(true);
+
+  const build = useCallback((pseudo: boolean) => (data ? studyQuoteItems(data, study, pseudo) : []), [data, study]);
+  const lines = useMemo(() => (data ? build(pseudonymise) : null), [data, build, pseudonymise]);
 
   if (!lines) return <Loading />;
   return (
@@ -98,20 +92,17 @@ export function StudyQuotes({ study, projects }: { study: Study; projects: Proje
             <Switch checked={pseudonymise} onChange={setPseudonymise} label={t("export.anonymize")} />
           </label>
         )}
-        <Button size="sm" variant="ghost" icon={<FileText className="size-3.5" />} disabled={!lines.length} onClick={() => void save("docx")}>
-          Word
-        </Button>
-        <Button size="sm" variant="ghost" icon={<Download className="size-3.5" />} disabled={!lines.length} onClick={() => void save("csv")}>
-          CSV
+        <Button size="sm" variant="secondary" icon={<Download className="size-3.5" />} disabled={!lines.length} onClick={onExport}>
+          {t("quotes.export")}
         </Button>
       </div>
       {lines.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-10 text-center text-[13px] text-fg-2">{t("quotes.studyEmpty")}</p>
+        <p className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-10 text-center text-[13px] text-fg-2">{t("quotes.studyEmpty", { key: shortcutLabel(`${MOD}+Q`) })}</p>
       ) : (
         <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
-          {lines.map((q, i) => (
+          {lines.map(({ projectId, s: at, line: q }, i) => (
             <li key={i}>
-              <button onClick={() => openAt(q.projectId, q.s)} className="w-full px-4 py-3 text-left hover:bg-surface-2">
+              <button onClick={() => openAt(projectId, at)} className="w-full px-4 py-3 text-left hover:bg-surface-2">
                 <p className="text-[13px] leading-relaxed italic">“{q.text}”</p>
                 <p className="mt-1 text-xs text-muted">{[q.participant, q.interview, q.time].filter(Boolean).join(" · ")}</p>
                 {q.note && <p className="mt-1 text-xs text-fg-2">{q.note}</p>}

@@ -150,9 +150,10 @@ the source code (see [Building from source](#building-from-source)).
    **Applications**.
 2. The first time, macOS may say the app "cannot be opened because Apple cannot check it for
    malicious software" or that it is "damaged". To open it anyway, use one of these:
-   - In Finder, right-click (or Control-click) the app and choose **Open**, then **Open** again; or
    - Try to open it once, then go to **System Settings > Privacy & Security**, scroll down and click
-     **Open Anyway**; or
+     **Open Anyway** (on macOS 15 and newer this is the only way without Terminal); or
+   - On macOS 13 or 14: in Finder, right-click (or Control-click) the app and choose **Open**, then
+     **Open** again; or
    - In Terminal, run:
      ```sh
      xattr -dr com.apple.quarantine "/Applications/Polarity Transcribe.app"

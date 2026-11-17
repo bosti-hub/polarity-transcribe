@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { anonymizeText, anonymizeTranscript, mergeRules, placeholderFor, suggestCandidates } from "./anonymize";
+import { anonymizeText, anonymizeTranscript, mergeRules, placeholderFor, pseudonymSpans, suggestCandidates } from "./anonymize";
 import type { Item, Transcript } from "./types";
 
 const w = (t: string, s: number): Item => ({ k: "w", t, s, e: s + 0.4, c: 0.9 });
@@ -94,5 +94,28 @@ describe("suggestions", () => {
   it("offers placeholders in the interview language", () => {
     expect(placeholderFor("name", "nl", 2)).toBe("[naam 2]");
     expect(placeholderFor("date", "en", 1)).toBe("[date]");
+  });
+});
+
+describe("pseudonymSpans", () => {
+  const w = (t: string, s: number, e: number) => ({ k: "w" as const, t, s, e, c: 1 });
+  const t = {
+    paragraphs: [
+      { id: "a", speaker: "S1", start: 0, end: 6, items: [w("Ik", 0, 0.3), w("sprak", 0.3, 0.8), w("Jan", 0.8, 1.1), w("de", 1.1, 1.2), w("Vries", 1.2, 1.6), w("en", 1.7, 1.8), w("jan.", 1.8, 2.1)] },
+      { id: "b", speaker: "S2", start: 10, end: 12, items: [w("Jan", 10, 10.4)] },
+    ],
+  };
+  const rules = mergeRules([{ find: "Jan de Vries", replace: "[A]" }, { find: "Jan", replace: "[B]" }], []);
+
+  it("gives the times of every match, multi-word ones as one span", () => {
+    expect(pseudonymSpans(t, rules, 0, 6)).toEqual([
+      [0.8, 1.6],
+      [1.8, 2.1],
+    ]);
+  });
+
+  it("only returns spans inside the fragment", () => {
+    expect(pseudonymSpans(t, rules, 9, 13)).toEqual([[10, 10.4]]);
+    expect(pseudonymSpans(t, [], 0, 13)).toEqual([]);
   });
 });

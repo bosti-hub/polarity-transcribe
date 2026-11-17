@@ -6,6 +6,7 @@ import { Loader2, X } from "lucide-react";
 import { Dialog as RDialog, DropdownMenu as RMenu, Slider as RSlider, Switch as RSwitch, Tooltip as RTooltip } from "radix-ui";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
 import { forwardRef } from "react";
+import { keyName, shortcutLabel } from "@/lib/keys";
 
 export const cx = clsx;
 
@@ -104,7 +105,7 @@ export function Tooltip({ label, shortcut, children }: { label: ReactNode; short
           className="anim-pop z-50 flex max-w-xs items-center gap-2 rounded-md bg-fg px-2 py-1 text-xs text-bg shadow-pop"
         >
           {label}
-          {shortcut && <span className="rounded bg-white/20 px-1 font-mono text-[10px]">{shortcut}</span>}
+          {shortcut && <span className="rounded bg-white/20 px-1 font-mono text-[10px]">{shortcutLabel(shortcut)}</span>}
         </RTooltip.Content>
       </RTooltip.Portal>
     </RTooltip.Root>
@@ -114,7 +115,7 @@ export function Tooltip({ label, shortcut, children }: { label: ReactNode; short
 export function Kbd({ children }: { children: ReactNode }) {
   return (
     <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-line-strong bg-surface-2 px-1 font-mono text-[11px] text-fg-2">
-      {children}
+      {typeof children === "string" ? keyName(children) : children}
     </kbd>
   );
 }

@@ -13,7 +13,9 @@ itself, and it prepares data for analysis software rather than becoming one.
 - FFmpeg bundled with the installers: done (7.1.5, audio-only, LGPL, signature-checked source
   pinned by SHA-256; Windows installer tested on a PC without FFmpeg).
 - First run of the GitHub release workflow; signed update packages (updater key in GitHub secrets).
-- macOS build tested on Apple Silicon.
+- macOS build tested on Apple Silicon: done (November 2026, Apple M5, macOS 26). Tests pass,
+  transcription runs on the GPU through Metal (about 11x real time end to end), the DMG with
+  the bundled FFmpeg builds and is ad-hoc signed. See the macOS notes in BUILDING.md.
 
 ## 1. Studies and interviews (done, November 2026)
 
@@ -82,6 +84,10 @@ recording with several conversations.
 ## 6. Quotes and search within a study (done, November 2026)
 
 - Highlights and comments in the transcript; a quote list with participant code and timestamp.
+- Quote export: numbered, as Word, CSV, text or Markdown, with an audio fragment per quote (MP3,
+  M4A or WAV) and optional voice anonymisation: a TV voice (clear and loud, about 80% of words
+  still recognised by the speech model) or an irreversible whisper (about 60%), and a beep over
+  pseudonymised names, placed by the word timings (done, November 2026).
 - Search across all interviews of a study, with the hit in context and a click to the audio.
 - Deliberately not: coding schemes and analysis; that belongs in QDA software.
 

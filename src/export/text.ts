@@ -38,3 +38,13 @@ export function toMarkdown(transcript: Transcript, options: RenderOptions): stri
     ...transcript.paragraphs.map(turn),
   ].join("\n\n") + "\n";
 }
+
+/** A table, one turn per row: number, start, end, speaker, text. Semicolons for Dutch Excel. */
+export function toCsv(transcript: Transcript, options: RenderOptions): string {
+  const nl = options.uiLanguage === "nl";
+  const sep = nl ? ";" : ",";
+  const cell = (v: string) => (/[",;\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const header = nl ? ["Nr.", "Begin", "Einde", "Spreker", "Tekst"] : ["No.", "Start", "End", "Speaker", "Text"];
+  const rows = transcript.paragraphs.map((p, i) => [String(i + 1), formatClock(p.start), formatClock(p.end), speakerName(transcript, p.speaker), paragraphText(p, transcript)]);
+  return "﻿" + [header, ...rows].map((r) => r.map(cell).join(sep)).join("\r\n") + "\r\n";
+}
