@@ -86,8 +86,11 @@ jobs:
         run: |
           features="${{ matrix.features }}"
           if [ "$RUNNER_OS" = "Windows" ] && [ "${{ inputs.windows_cpu_only }}" = "true" ]; then features=""; fi
-          args="--target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json"
-          if [ "$RUNNER_OS" = "Windows" ]; then args="$args --config src-tauri/tauri.release.windows.conf.json"; fi
+          args="--bundles ${{ matrix.bundles }} --config src-tauri/tauri.release.conf.json"
+          # No --target on Windows: the runner already is x86_64-pc-windows-msvc, and the extra
+          # "x86_64-pc-windows-msvc\" folder pushes the Vulkan shader build past MSBuild's
+          # 260-character path limit (FileTracker error FTK1011).
+          if [ "$RUNNER_OS" = "Windows" ]; then args="$args --config src-tauri/tauri.release.windows.conf.json"; else args="--target ${{ matrix.target }} $args"; fi
           if [ -n "$features" ]; then args="$args --features $features"; fi
           echo "features=$features" >> "$GITHUB_OUTPUT"
           echo "args=$args" >> "$GITHUB_OUTPUT"
@@ -181,9 +184,10 @@ jobs:
         run: |
           $features = "${{ steps.flavour.outputs.features }}"
           $extra = if ($features) { @("--features", $features) } else { @() }
-          cargo build --release --locked --target ${{ matrix.target }} -p pt-core @extra
+          # Host target, no --target (see "Decide build flavour"): output goes to C:\t\release.
+          cargo build --release --locked -p pt-core @extra
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node scripts/collect-runtime.mjs ${{ matrix.target }}
+          node scripts/collect-runtime.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # --- App build and draft release ---------------------------------------------------------
