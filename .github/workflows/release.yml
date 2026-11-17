@@ -172,13 +172,19 @@ jobs:
       # starts on a laptop without any developer tools (see scripts/collect-runtime.mjs).
       # Building the engine first puts DirectML.dll in the target folder; the app build below
       # reuses everything compiled here.
+      # PowerShell, not bash: Git Bash rewrites environment values that start with "/" into
+      # paths when it starts a Windows program, so CL=/O2 reached cl.exe as C:/.../Git/O2 and
+      # CMake found no working compiler.
       - name: Collect Windows runtime DLLs
         if: runner.os == 'Windows'
-        shell: bash
+        shell: pwsh
         run: |
-          features="${{ steps.flavour.outputs.features }}"
-          cargo build --release --locked --target ${{ matrix.target }} -p pt-core ${features:+--features "$features"}
+          $features = "${{ steps.flavour.outputs.features }}"
+          $extra = if ($features) { @("--features", $features) } else { @() }
+          cargo build --release --locked --target ${{ matrix.target }} -p pt-core @extra
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node scripts/collect-runtime.mjs ${{ matrix.target }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # --- App build and draft release ---------------------------------------------------------
 
