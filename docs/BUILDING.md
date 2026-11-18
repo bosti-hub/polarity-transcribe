@@ -285,6 +285,12 @@ Keep a backup of the private key: without it, installed apps can no longer be up
 automatically (users would have to download the next installer by hand). A new key pair is made
 with `npx tauri signer generate -w <file>`; put the new public key in `tauri.conf.json`.
 
+Running a newer installer by hand also installs over the old version without asking to uninstall
+first: `src-tauri/windows/installer.nsi` is Tauri's NSIS template with that one question taken
+out for upgrades (same version and downgrades still ask). When `@tauri-apps/cli` is upgraded,
+copy its new template (`tauri-bundler`'s `src/bundle/windows/nsis/installer.nsi`) and apply the
+change marked "Polarity Transcribe:" again.
+
 To try the update flow locally, build a newer version with
 `--config '{"version":"0.1.1"}'` and `createUpdaterArtifacts`, serve its installer and a
 `latest.json` from a local web server, and point a test build's `endpoints` at it (with

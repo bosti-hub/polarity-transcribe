@@ -74,7 +74,8 @@ For a precise statement you can give to an ethics committee or supervisor, see
 - Import audio or video (mp3, m4a, wav, flac, ogg, mp4, mov, mkv, webm and more; from a video
   the app takes the sound). **New transcription** asks what kind of recording it is: a
   conversation or interview, or a lecture or presentation. A lecture has one speaker, so the app
-  does not try to tell voices apart (also available in the setup as 1 speaker).
+  does not try to tell voices apart (also available in the setup as 1 speaker), and it gets a clean
+  reading text without fillers, pause tags or the built-in annotations.
 - Import one or two audio files (for example one per speaker), or a single split-stereo file with
   one speaker per channel.
 - Automatic detection of whether a stereo file is split-stereo (one speaker per channel) or a
@@ -97,7 +98,8 @@ The app chooses the most reliable method the recording allows, and tells you whi
 **Transcription**
 - The spoken language (Dutch or English) is checked at the start of every transcription. If the
   interview was set to the other language by mistake, the app switches and tells you in the editor.
-- Verbatim output that keeps filler words such as `[uhm]` and `[hmm]`.
+- Verbatim output that keeps filler words such as `[uhm]` and `[hmm]`. Switch **Verbatim
+  transcript** off in the setup for a clean reading text (the default for a lecture).
 - Measured pause tags, for example `[stilte 3.5s]` in Dutch or `[silence 3.5s]` in English.
 - Short backchannels shown inline, for example `[Interviewer: hm-hm]`.
 - With a microphone per speaker, speech that overlaps the other speaker is marked
@@ -111,7 +113,8 @@ The app chooses the most reliable method the recording allows, and tells you whi
 - Playback jumps back a moment when you resume after a pause (adjustable), and play/pause,
   rewind and fast forward can be put on any key, including the pedals of a foot switch.
 - Words the recogniser is unsure about are highlighted, with a jump-to-next button.
-- Toolbar for behavioural annotations, with keyboard shortcuts and your own custom tags.
+- Toolbar for behavioural annotations, with keyboard shortcuts and your own custom tags. Click to
+  insert at the cursor, or drag an annotation to a place in the text.
   `[onverstaanbaar]` replaces the selected words and records the time, for example
   `[onverstaanbaar 12:31]`.
 - Split a turn with Enter, merge it with the previous one with Backspace.
@@ -164,14 +167,14 @@ the source code (see [Building from source](#building-from-source)).
 
 ### Windows 10 / 11 (64-bit)
 
-1. Download `Polarity Transcribe_<version>_x64-setup.exe`.
+1. Download `Polarity-Transcribe-<version>-Windows-setup.exe`.
 2. Run it. Windows SmartScreen may show "Windows protected your PC". Click **More info**, then
    **Run anyway**.
 3. The installer installs for your user account only and does not need administrator rights.
 
 ### macOS (Apple Silicon: M1 or newer)
 
-1. Download `Polarity Transcribe_<version>_aarch64.dmg`, open it and drag the app to
+1. Download `Polarity-Transcribe-<version>-Mac.dmg`, open it and drag the app to
    **Applications**.
 2. The first time, macOS may say the app "cannot be opened because Apple cannot check it for
    malicious software" or that it is "damaged". To open it anyway, use one of these:

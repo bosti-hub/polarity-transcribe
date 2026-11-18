@@ -45,6 +45,7 @@ import "@/editor/editor.css";
 import { InterviewDetails } from "@/components/InterviewDetails";
 import { ExportDialog, type ExportTab } from "@/editor/ExportDialog";
 import { AnonymizePanel, InfoPanel, MOD, QuotesPanel, SparseLinks, SpeakersPanel, TagsPanel, type Report } from "@/editor/panels";
+import { useTagDrag } from "@/editor/tagDrag";
 import { DetailCheck, type CheckSession } from "@/editor/DetailCheck";
 import { Player, type Listen, type PlayerState } from "@/editor/player";
 import {
@@ -530,7 +531,27 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
   const detailsRef = useRef(details);
   detailsRef.current = details;
 
-  const hiddenTags = useMemo(() => extras.hiddenTags ?? [], [extras.hiddenTags]);
+  // An annotation dragged from the tool row or the side panel goes where it is dropped.
+  const tagDrag = useTagDrag(
+    useCallback(() => editorRef.current?.view ?? null, []),
+    useCallback(
+      (tag: string, pos: number) => {
+        const ed = editorRef.current;
+        if (!ed) return;
+        ed.view.dispatch(ed.state.tr.setSelection(TextSelection.create(ed.state.doc, pos)));
+        insertTag(tag);
+      },
+      [insertTag],
+    ),
+  );
+
+  // A lecture or presentation (one speaker, or a clean non-verbatim transcript) starts without
+  // the built-in labels ([lacht], [stilte], ...); "Restore" in the panel brings them back.
+  const lecture = project.speakerCount === 1 || project.verbatim === false;
+  const hiddenTags = useMemo(
+    () => extras.hiddenTags ?? (lecture ? DEFAULT_TAGS[transcript.language] : []),
+    [extras.hiddenTags, lecture, transcript.language],
+  );
   const defaultTags = useMemo(() => DEFAULT_TAGS[transcript.language].filter((tag) => !hiddenTags.includes(tag)), [transcript.language, hiddenTags]);
   const tags = useMemo(() => [...defaultTags, ...extras.customTags], [defaultTags, extras.customTags]);
   const tagsRef = useRef(tags);
@@ -1039,8 +1060,9 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
             <Tooltip key={tag} label={t("editor.scTag")} shortcut={`${MOD}+${i + 1}`}>
               <button
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => insertTag(tag)}
-                className="h-7 shrink-0 rounded-md bg-tag-soft px-2 text-xs font-medium text-tag italic hover:brightness-95"
+                onPointerDown={(e) => tagDrag.start(tag, e)}
+                onClick={() => !tagDrag.wasDrag() && insertTag(tag)}
+                className="h-7 shrink-0 cursor-grab rounded-md bg-tag-soft px-2 text-xs font-medium text-tag italic hover:brightness-95"
               >
                 {tag}
               </button>
@@ -1173,6 +1195,7 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
                 defaults={defaultTags}
                 custom={extras.customTags}
                 onInsert={insertTag}
+                drag={tagDrag}
                 onAdd={(tag) => saveExtras({ ...extras, customTags: [...extras.customTags, tag] })}
                 onRemove={(tag) =>
                   saveExtras(

@@ -38,7 +38,7 @@ import { canQueue, interviewDate, participantCodes, STAGE_GROUPS, STAGE_STYLE, s
 import { onFileDrop, pickAudioFiles } from "@/lib/platform";
 import { activeModel, useApp } from "@/lib/store";
 import { formatDuration } from "@/lib/transcript";
-import type { Language, Project, Study } from "@/lib/types";
+import type { Language, Project, ProjectPatch, Study } from "@/lib/types";
 import { ParticipantsTable } from "./Participants";
 import { DeleteStudyDialog, NewStudyDialog, StudySettingsDialog } from "./StudyDialogs";
 import { exportPseudonymKey, StudyExportDialog } from "./StudyExport";
@@ -77,6 +77,9 @@ function lastInterviewLanguage(): Language | null {
 type RecordingKind = "conversation" | "lecture";
 const KIND_KEY = "pt.recordingKind";
 
+/** A lecture or presentation: one speaker, and a clean reading text without fillers or pauses. */
+const LECTURE: ProjectPatch = { speakerCount: 1, verbatim: false };
+
 /** The kind chosen last time in the import dialog. */
 function lastKind(): RecordingKind {
   try {
@@ -103,24 +106,24 @@ function nameFromFile(path: string, t: TFn, lang: Language): string {
 
 /**
  * One interview from one or two recordings of the same conversation; opens its setup.
- * `speakers` sets the expected number of speakers (1 for a lecture); otherwise the default.
+ * `setup` overrides the defaults (a lecture: one speaker, no fillers or pause tags).
  */
-async function startInterview(paths: string[], studyId: string | null, t: TFn, speakers?: number) {
+async function startInterview(paths: string[], studyId: string | null, t: TFn, setup?: ProjectPatch) {
   const { settings, queueImports, go, refreshStudies } = useApp.getState();
   let project = await api.createProject(nameFromFile(paths[0], t, settings.uiLanguage), lastInterviewLanguage() ?? settings.uiLanguage, studyId);
-  if (speakers) project = await api.updateProject(project.id, { speakerCount: speakers });
+  if (setup) project = await api.updateProject(project.id, setup);
   if (studyId) void refreshStudies();
   queueImports(project.id, paths.slice(0, 2));
   go({ name: "setup", id: project.id });
 }
 
 /** One interview per recording, imported one after another in the background. */
-async function addInterviews(paths: string[], studyId: string | null, t: TFn, speakers?: number) {
+async function addInterviews(paths: string[], studyId: string | null, t: TFn, setup?: ProjectPatch) {
   const { settings, importInBackground, refreshStudies, toast } = useApp.getState();
   const jobs: { projectId: string; path: string }[] = [];
   for (const path of paths) {
     const p = await api.createProject(nameFromFile(path, t, settings.uiLanguage), lastInterviewLanguage() ?? settings.uiLanguage, studyId);
-    if (speakers) await api.updateProject(p.id, { speakerCount: speakers });
+    if (setup) await api.updateProject(p.id, setup);
     jobs.push({ projectId: p.id, path });
   }
   importInBackground(jobs);
@@ -199,8 +202,8 @@ export function Home() {
       try {
         // A lecture is one speaker per recording: several files are separate transcriptions.
         if (as === "lecture") {
-          if (paths.length === 1) await startInterview(paths, studyId, t, 1);
-          else await addInterviews(paths, studyId, t, 1);
+          if (paths.length === 1) await startInterview(paths, studyId, t, LECTURE);
+          else await addInterviews(paths, studyId, t, LECTURE);
         } else if (paths.length === 1) await startInterview(paths, studyId, t);
         else if (paths.length === 2) setTwoFiles(paths);
         else await addInterviews(paths, studyId, t);

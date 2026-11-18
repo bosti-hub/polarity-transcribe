@@ -78,6 +78,7 @@ function project(id: string, name: string, status: Project["status"], sources: (
     splitStereo: null,
     speakerCount: 2,
     pauseThreshold: 3,
+    verbatim: true,
     glossary: [],
     model: null,
     status,

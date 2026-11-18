@@ -1,8 +1,8 @@
-// Interview language, pause threshold and glossary. Text fields keep local state and save
-// through a debounced patch so typing never waits on the backend.
+// Interview language, verbatim or clean text, pause threshold and glossary. Text fields keep
+// local state and save through a debounced patch so typing never waits on the backend.
 
 import { useState } from "react";
-import { Field, Segmented, TextInput } from "@/components/ui";
+import { Field, Segmented, Switch, TextInput } from "@/components/ui";
 import { useT } from "@/lib/i18n";
 import type { Language, Project, ProjectPatch } from "@/lib/types";
 
@@ -48,31 +48,43 @@ export function Options({ project, onPatch }: { project: Project; onPatch: Patch
         </div>
       </div>
 
-      <Field label={t("setup.pauseThreshold")} hint={t("setup.pauseThresholdHint")}>
-        <div className="flex items-center gap-2">
-          <TextInput
-            type="number"
-            min={1}
-            max={30}
-            step={0.5}
-            value={pause}
-            aria-invalid={!pauseValid}
-            className="tabular w-24"
-            onChange={(e) => {
-              const text = e.target.value;
-              setPause(text);
-              const v = Number(text.replace(",", "."));
-              if (text.trim() !== "" && Number.isFinite(v) && v >= 1 && v <= 30) onPatch({ pauseThreshold: v }, "pause");
-            }}
-            onBlur={() => {
-              const v = Number.isFinite(pauseValue) ? Math.min(30, Math.max(1, Math.round(pauseValue * 2) / 2)) : project.pauseThreshold;
-              setPause(String(v));
-              if (v !== project.pauseThreshold) onPatch({ pauseThreshold: v }, "pause");
-            }}
-          />
-          <span className="text-[13px] text-fg-2">{t("setup.seconds")}</span>
-        </div>
-      </Field>
+      <div className="flex flex-col gap-1.5">
+        <span className="text-[13px] font-medium text-fg">{t("setup.verbatim")}</span>
+        <label className="flex min-h-9 cursor-pointer items-center gap-2.5 text-sm">
+          <Switch checked={project.verbatim} onChange={(verbatim) => onPatch({ verbatim })} label={t("setup.verbatim")} />
+          <span className="text-fg-2">{project.verbatim ? t("setup.verbatimOn") : t("setup.verbatimOff")}</span>
+        </label>
+        <span className="text-xs leading-relaxed text-muted">{t("setup.verbatimHint")}</span>
+      </div>
+
+      {/* Pause tags only exist in a verbatim transcript. */}
+      {project.verbatim && (
+        <Field label={t("setup.pauseThreshold")} hint={t("setup.pauseThresholdHint")}>
+          <div className="flex items-center gap-2">
+            <TextInput
+              type="number"
+              min={1}
+              max={30}
+              step={0.5}
+              value={pause}
+              aria-invalid={!pauseValid}
+              className="tabular w-24"
+              onChange={(e) => {
+                const text = e.target.value;
+                setPause(text);
+                const v = Number(text.replace(",", "."));
+                if (text.trim() !== "" && Number.isFinite(v) && v >= 1 && v <= 30) onPatch({ pauseThreshold: v }, "pause");
+              }}
+              onBlur={() => {
+                const v = Number.isFinite(pauseValue) ? Math.min(30, Math.max(1, Math.round(pauseValue * 2) / 2)) : project.pauseThreshold;
+                setPause(String(v));
+                if (v !== project.pauseThreshold) onPatch({ pauseThreshold: v }, "pause");
+              }}
+            />
+            <span className="text-[13px] text-fg-2">{t("setup.seconds")}</span>
+          </div>
+        </Field>
+      )}
 
       <Field label={t("setup.glossary")} hint={t("setup.glossaryHint")} className="md:col-span-2">
         <TextInput

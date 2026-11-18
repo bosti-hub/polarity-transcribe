@@ -970,7 +970,7 @@ fn run_inner(
         words,
         &all_speech,
         duration,
-        &AssembleOpts { language: project.language, pause_threshold: project.pause_threshold, speaker_count, mark_overlap: own_mic },
+        &AssembleOpts { language: project.language, pause_threshold: project.pause_threshold, speaker_count, mark_overlap: own_mic, verbatim: project.verbatim },
     );
 
     let transcript_file = dir.join(files::TRANSCRIPT);

@@ -1,7 +1,7 @@
 // Transcription progress: a calm card with the overall percentage, the stage list, time left
 // and the most recently recognised text. Pausing, resuming and failures are handled here too.
 
-import { AlertCircle, Check, Laptop, LogOut, Pause, Play, Square } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, Laptop, Layers, LogOut, Pause, Play, Square } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Frame } from "@/components/Frame";
 import { Button, Callout, Progress, Spinner, cx } from "@/components/ui";
@@ -97,7 +97,22 @@ export function ProgressScreen({ projectId }: { projectId: string }) {
         {!loaded ? (
           <Spinner className="size-6" />
         ) : (
-          <div className="anim-pop w-full max-w-[640px] rounded-2xl border border-line bg-surface p-7 shadow-card sm:p-8">
+          <div className="flex w-full max-w-[640px] flex-col gap-4">
+            {/* Not obvious otherwise: leaving this screen does not stop the transcription. */}
+            {!failed && !paused && (
+              <Callout icon={<Layers />}>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">{t("progress.backgroundTitle")}</span>
+                    <span className="mt-0.5 block text-[13px] text-fg-2">{t("progress.backgroundBody")}</span>
+                  </span>
+                  <Button variant="secondary" size="sm" icon={<ArrowLeft className="size-3.5" />} onClick={() => go({ name: "home" })}>
+                    {t("progress.toOverview")}
+                  </Button>
+                </div>
+              </Callout>
+            )}
+          <div className="anim-pop w-full rounded-2xl border border-line bg-surface p-7 shadow-card sm:p-8">
             {idle ? (
               <div className="flex flex-col items-center py-4 text-center">
                 <span className="flex size-12 items-center justify-center rounded-full bg-warn-soft text-warn">
@@ -194,6 +209,7 @@ export function ProgressScreen({ projectId }: { projectId: string }) {
                 </div>
               )}
             </div>
+          </div>
           </div>
         )}
       </div>

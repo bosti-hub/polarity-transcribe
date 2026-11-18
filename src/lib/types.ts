@@ -43,6 +43,8 @@ export interface Project {
   splitStereo: boolean | null;
   speakerCount: number;
   pauseThreshold: number;
+  /** Fillers ("[uhm]") and pause tags are written out; off for a lecture. */
+  verbatim: boolean;
   glossary: string[];
   model: string | null;
   status: ProjectStatus;
@@ -74,6 +76,7 @@ export interface ProjectPatch {
   stereoMode?: "auto" | "split" | "mono";
   speakerCount?: number;
   pauseThreshold?: number;
+  verbatim?: boolean;
   glossary?: string[];
   model?: string;
   trims?: { slot: number; start: number; end: number }[];

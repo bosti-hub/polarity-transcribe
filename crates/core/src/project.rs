@@ -29,6 +29,10 @@ fn one() -> f32 {
     1.0
 }
 
+fn yes() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Source {
@@ -66,6 +70,10 @@ pub struct Project {
     pub speaker_count: u8,
     /// Pauses longer than this get a pause tag (seconds).
     pub pause_threshold: f64,
+    /// Verbatim transcript: hesitation fillers ("[uhm]") and pause tags are written out. Off
+    /// for a lecture, where they only get in the way of reading.
+    #[serde(default = "yes")]
+    pub verbatim: bool,
     /// Names and terms the recogniser should know about.
     pub glossary: Vec<String>,
     /// Model id; `None` = the app default.
@@ -233,6 +241,7 @@ impl Store {
             split_stereo: None,
             speaker_count: 2,
             pause_threshold: 3.0,
+            verbatim: true,
             glossary: Vec::new(),
             model: None,
             status: Status::Setup,

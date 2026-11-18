@@ -3,6 +3,7 @@
 import { ArrowUpToLine, ChevronLeft, ChevronRight, Download, Play, Plus, Quote as QuoteIcon, Replace, RotateCcw, ShieldAlert, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Button, Callout, cx, IconButton, Kbd, Switch, TextInput } from "@/components/ui";
+import type { TagDrag } from "@/editor/tagDrag";
 import { useT } from "@/lib/i18n";
 import { formatClock, formatDuration } from "@/lib/transcript";
 import type { AnonymizeRule, Quote, Speaker } from "@/lib/types";
@@ -77,6 +78,7 @@ export function TagsPanel({
   defaults,
   custom,
   onInsert,
+  drag,
   onAdd,
   onRemove,
   onRestoreDefaults,
@@ -85,6 +87,8 @@ export function TagsPanel({
   defaults: string[];
   custom: string[];
   onInsert: (tag: string) => void;
+  /** Dragging an annotation into the text. */
+  drag?: TagDrag;
   onAdd: (tag: string) => void;
   onRemove: (tag: string) => void;
   /** Present when built-in labels were removed: puts them back. */
@@ -103,14 +107,17 @@ export function TagsPanel({
   return (
     <div>
       <PanelTitle>{t("editor.tags")}</PanelTitle>
+      <p className="-mt-1 mb-2 text-xs leading-relaxed text-muted">{all.length ? t("editor.tagsHint") : t("editor.tagsEmpty")}</p>
       <div className="flex flex-col gap-1">
         {all.map((tag, i) => (
           <div key={tag} className="group flex items-center gap-1">
             <button
-              // Keep the text cursor where it is: the tag goes there.
+              // Keep the text cursor where it is: a click inserts the tag there. Dragging puts it
+              // where it is dropped (src/editor/tagDrag.ts).
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => onInsert(tag)}
-              className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-left text-[13px] hover:bg-surface-3"
+              onPointerDown={(e) => drag?.start(tag, e)}
+              onClick={() => !drag?.wasDrag() && onInsert(tag)}
+              className="flex h-8 min-w-0 flex-1 cursor-grab items-center gap-2 rounded-lg px-2 text-left text-[13px] hover:bg-surface-3 active:cursor-grabbing"
             >
               <span className="min-w-0 flex-1 truncate text-tag italic">{tag}</span>
               {i < 9 && (

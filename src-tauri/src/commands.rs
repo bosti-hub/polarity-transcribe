@@ -171,6 +171,7 @@ pub struct ProjectPatch {
     stereo_mode: Option<String>,
     speaker_count: Option<u8>,
     pause_threshold: Option<f64>,
+    verbatim: Option<bool>,
     glossary: Option<Vec<String>>,
     model: Option<String>,
     trims: Option<Vec<TrimPatch>>,
@@ -209,6 +210,9 @@ pub fn update_project(state: State<'_, AppState>, id: String, patch: ProjectPatc
     }
     if let Some(t) = patch.pause_threshold {
         p.pause_threshold = t.clamp(0.5, 60.0);
+    }
+    if let Some(v) = patch.verbatim {
+        p.verbatim = v;
     }
     if let Some(g) = patch.glossary {
         p.glossary = g.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).take(60).collect();

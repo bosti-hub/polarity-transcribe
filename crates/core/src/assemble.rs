@@ -25,6 +25,8 @@ pub struct AssembleOpts {
     /// Mark speech that overlaps another speaker's turn. Only meaningful when each speaker
     /// has their own microphone: otherwise the speaker detection never lets turns overlap.
     pub mark_overlap: bool,
+    /// Keep hesitation fillers and pause tags. Off gives a clean reading text (a lecture).
+    pub verbatim: bool,
 }
 
 /// Overlap shorter than this is ordinary turn-taking, not talking at the same time.
@@ -396,6 +398,46 @@ fn ends_sentence(item: &Item) -> bool {
     matches!(item, Item::Word { t, .. } if t.ends_with(['.', '?', '!']))
 }
 
+fn capitalise(text: &str) -> String {
+    match text.char_indices().find(|(_, c)| c.is_alphabetic()) {
+        Some((i, c)) => format!("{}{}{}", &text[..i], c.to_uppercase(), &text[i + c.len_utf8()..]),
+        None => text.to_string(),
+    }
+}
+
+/// Leave out hesitation fillers. A sentence end attached to a filler ("[uhm].") moves to the
+/// word before it, and a sentence that began with a filler starts with a capital again.
+fn drop_fillers(items: Vec<Item>) -> Vec<Item> {
+    let mut out: Vec<Item> = Vec::with_capacity(items.len());
+    let mut capital_next = false;
+    for item in items {
+        match item {
+            Item::Word { f: true, t, .. } => {
+                let punct = &t[t.trim_end_matches(['.', '?', '!']).len()..];
+                match out.iter_mut().rev().find(|i| matches!(i, Item::Word { .. })) {
+                    Some(Item::Word { t: prev, .. }) => {
+                        if !punct.is_empty() && !prev.ends_with(['.', '?', '!']) {
+                            *prev = format!("{}{punct}", prev.trim_end_matches([',', ';', ':']));
+                        }
+                        // The filler opened a sentence (or now closes one): the next word opens it.
+                        if prev.ends_with(['.', '?', '!']) {
+                            capital_next = true;
+                        }
+                    }
+                    _ => capital_next = true,
+                }
+            }
+            Item::Word { t, s, e, c, f } => {
+                let t = if capital_next { capitalise(&t) } else { t };
+                capital_next = false;
+                out.push(Item::Word { t, s, e, c, f });
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Build the transcript.
 ///
 /// `words` may be in any order. `speech` is the union of everyone's voice activity and is used
@@ -471,10 +513,17 @@ pub fn assemble(mut words: Vec<SpokenWord>, speech: &[Span], duration: f64, opts
         }
     }
 
-    // 3. Pauses measured on the audio: gaps in everyone's voice activity.
+    if !opts.verbatim {
+        for turn in turns.iter_mut() {
+            turn.items = drop_fillers(std::mem::take(&mut turn.items));
+        }
+        turns.retain(|t| t.items.iter().any(|i| matches!(i, Item::Word { .. })));
+    }
+
+    // 3. Pauses measured on the audio: gaps in everyone's voice activity (verbatim only).
     let mut silences: Vec<Span> = Vec::new();
     let mut prev_end = 0.0;
-    for s in speech {
+    for s in speech.iter().filter(|_| opts.verbatim) {
         if s.start - prev_end >= opts.pause_threshold {
             silences.push(Span::new(prev_end, s.start));
         }
@@ -562,7 +611,7 @@ mod tests {
     }
 
     fn opts() -> AssembleOpts {
-        AssembleOpts { language: Language::Nl, pause_threshold: 3.0, speaker_count: 2, mark_overlap: false }
+        AssembleOpts { language: Language::Nl, pause_threshold: 3.0, speaker_count: 2, mark_overlap: false, verbatim: true }
     }
 
     fn text(p: &Paragraph) -> String {
@@ -584,6 +633,23 @@ mod tests {
         assert_eq!(bracket_filler("hmm..."), "[hmm]...");
         let t = assemble(vec![w(0, "Uhm,", 0.0, 0.3), w(0, "ja.", 0.4, 0.6)], &[Span::new(0.0, 0.6)], 1.0, &opts());
         assert_eq!(text(&t.paragraphs[0]), "[uhm], ja.");
+    }
+
+    #[test]
+    fn clean_text_leaves_out_fillers_and_pauses() {
+        let words = vec![
+            w(0, "Uhm,", 0.0, 0.3),
+            w(0, "dat", 0.4, 0.6),
+            w(0, "klopt", 0.6, 0.9),
+            w(0, "eh.", 1.0, 1.2),
+            w(0, "hoe", 5.0, 5.2),
+            w(0, "verder?", 5.2, 5.6),
+        ];
+        let speech = [Span::new(0.0, 1.2), Span::new(5.0, 5.6)];
+        let verbatim = assemble(words.clone(), &speech, 6.0, &opts());
+        assert_eq!(text(&verbatim.paragraphs[0]), "[uhm], dat klopt [eh]. [stilte 3.8s] hoe verder?");
+        let clean = assemble(words, &speech, 6.0, &AssembleOpts { verbatim: false, ..opts() });
+        assert_eq!(text(&clean.paragraphs[0]), "Dat klopt. Hoe verder?");
     }
 
     #[test]
