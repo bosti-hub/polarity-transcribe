@@ -119,6 +119,10 @@ enum Cmd {
         /// Print per-word timings and probabilities.
         #[arg(long)]
         words: bool,
+        /// Write each chunk's audio (16 kHz mono f32, raw little-endian) and a chunks.json
+        /// here, so another recogniser can be run on exactly the same chunks.
+        #[arg(long)]
+        dump_chunks: Option<PathBuf>,
     },
 }
 
@@ -247,7 +251,7 @@ fn main() -> Result<()> {
             eprintln!("\rimported {:.1}s of audio in {:.1}s", src.duration, t.elapsed().as_secs_f64());
             println!("{}", serde_json::to_string_pretty(&src)?);
         }
-        Cmd::Bench { input, model, vad_model, start, duration, lang, threads, beam, prompt, channel, gpu, json, words } => {
+        Cmd::Bench { input, model, vad_model, start, duration, lang, threads, beam, prompt, channel, gpu, json, words, dump_chunks } => {
             let lang = Language::parse(&lang).context("language must be nl or en")?;
             let channel = match channel {
                 Chan::Mix => Channel::Mix,
@@ -276,6 +280,24 @@ fn main() -> Result<()> {
                 for s in &speech {
                     println!("  speech {:>8.2} {:>8.2}", start + s.start, start + s.end);
                 }
+            }
+            if let Some(dir) = &dump_chunks {
+                std::fs::create_dir_all(dir)?;
+                let mut index = Vec::new();
+                for (i, ch) in chunks.iter().enumerate() {
+                    let samples = ch.extract(&audio, 16_000);
+                    let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+                    std::fs::write(dir.join(format!("{i:04}.f32")), bytes)?;
+                    let span = ch.span();
+                    index.push(serde_json::json!({
+                        "chunk": i,
+                        "start": start + span.start,
+                        "end": start + span.end,
+                        "audio": ch.duration(),
+                    }));
+                }
+                std::fs::write(dir.join("chunks.json"), serde_json::to_vec_pretty(&index)?)?;
+                eprintln!("wrote {} chunks to {}", chunks.len(), dir.display());
             }
             let t = Instant::now();
             let asr = AsrModel::load(&model, gpu)?;

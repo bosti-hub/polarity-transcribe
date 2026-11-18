@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { anonymizeText, anonymizeTranscript, mergeRules, placeholderFor, pseudonymSpans, suggestCandidates } from "./anonymize";
+import { anonymizeText, anonymizeTranscript, findDetails, mergeRules, placeholderFor, pseudonymSpans } from "./anonymize";
 import type { Item, Transcript } from "./types";
 
 const w = (t: string, s: number): Item => ({ k: "w", t, s, e: s + 0.4, c: 0.9 });
@@ -61,14 +61,16 @@ describe("anonymizeTranscript", () => {
   });
 });
 
-describe("suggestions", () => {
+describe("pseudonymisation check", () => {
+  const none = { glossary: [], rules: [], keep: [] };
+
   it("finds names mid-sentence, dates, years, numbers, e-mail and phone numbers", () => {
     const t = transcript(
       "Toen zei Jan de Vries dat Petra het wist.",
       "Op 12 maart 2023 belde ik 06-12345678 en mailde jan@example.nl over 3512 JE.",
       "In 2019 werkte ik bij Zuyderland, dossier 4471923.",
     );
-    const found = suggestCandidates(t, ["Zuyderland", "Leuven"], []);
+    const found = findDetails(t, { ...none, glossary: ["Zuyderland", "Leuven"] });
     const terms = Object.fromEntries(found.map((c) => [c.term, c.kind]));
     expect(terms["Jan de Vries"]).toBe("name");
     expect(terms["Petra"]).toBe("name");
@@ -79,21 +81,39 @@ describe("suggestions", () => {
     expect(terms["3512 JE"]).toBe("postcode");
     expect(terms["4471923"]).toBe("number");
     expect(terms["Zuyderland"]).toBeDefined();
-    // Not in the text, so not suggested; sentence starts and speaker names are not names.
+    // Not in the text, so not asked about; sentence starts are not names.
     expect(terms["Leuven"]).toBeUndefined();
     expect(terms["Toen"]).toBeUndefined();
     expect(terms["Op"]).toBeUndefined();
+    // In the order they occur.
+    expect(found.map((d) => d.term).slice(0, 3)).toEqual(["Jan de Vries", "Petra", "12 maart 2023"]);
   });
 
-  it("leaves out what a rule already covers", () => {
-    const t = transcript("Toen zei Petra dat Jan het wist.");
-    const found = suggestCandidates(t, [], [{ find: "petra", replace: "[x]" }]);
-    expect(found.map((c) => c.term)).toEqual(["Jan"]);
+  it("leaves out discourse words and words mostly written in lower case", () => {
+    const t = transcript("Welkom Alex. Ja, ik woon in Delft.", "Nou, Ja, ik werk bij de UvA. Mijn vader ook, en vader zegt dat Vader trots is.");
+    // "Ja" is a discourse word; "vader" is written in lower case more often than not.
+    expect(findDetails(t, none).map((d) => [d.term, d.kind])).toEqual([
+      ["Alex", "name"],
+      ["Delft", "name"],
+      ["UvA", "name"],
+    ]);
   });
 
-  it("offers placeholders in the interview language", () => {
-    expect(placeholderFor("name", "nl", 2)).toBe("[naam 2]");
-    expect(placeholderFor("date", "en", 1)).toBe("[date]");
+  it("counts only what the rules leave, and skips kept terms", () => {
+    const t = transcript("Toen zei Petra dat Jan het wist, en Jan de Vries ook.", "Ik woon in Delft.");
+    const found = findDetails(t, {
+      glossary: [],
+      rules: [{ find: "petra", replace: "[x]" }, { find: "Jan de Vries", replace: "[y]" }],
+      keep: ["delft"],
+    });
+    expect(found.map((d) => [d.term, d.count])).toEqual([["Jan", 1]]);
+  });
+
+  it("offers numbered placeholders in the interview language", () => {
+    const rules = [{ find: "Jan", replace: "[naam 1]" }, { find: "Petra", replace: "[naam 2]" }];
+    expect(placeholderFor("name", "nl", rules)).toBe("[naam 3]");
+    expect(placeholderFor("term", "en")).toBe("[name 1]");
+    expect(placeholderFor("date", "en", rules)).toBe("[date]");
   });
 });
 

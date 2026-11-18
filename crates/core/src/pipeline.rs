@@ -580,8 +580,13 @@ fn run_inner(
         Err(_) => {
             let n_frames = probs[0].len();
             let wanted = if project.speaker_count >= 2 { project.speaker_count as usize } else { 2 };
+            // One speaker chosen for a single recording (a lecture or presentation): nothing to
+            // tell apart, so everything stays with that speaker.
+            let one_speaker = n_tracks == 1 && project.speaker_count == 1;
             let mut result = Attribution { method: Method::None, spans: vec![vad_spans[0].clone()], bleed: None, delay: None, voice: None };
-            if n_tracks == 2 {
+            if one_speaker {
+                // Method::None with one span list: assembly gives every word to the one speaker.
+            } else if n_tracks == 2 {
                 // First choice: each microphone clearly favours its own speaker.
                 let p1 = activity::frame_power(|s, n| pcm_read(&track_path(0), s, n), n_samples as u64)?;
                 let p2 = activity::frame_power(|s, n| pcm_read(&track_path(1), s, n), n_samples as u64)?;
@@ -637,7 +642,7 @@ fn run_inner(
             }
             // Last resort, and the normal case for one phone on the table: tell the speakers
             // apart by their voices.
-            if result.method == Method::None {
+            if result.method == Method::None && !one_speaker {
                 if let Some(model) = cfg.voice_model.as_ref().filter(|m| m.exists()) {
                     rep.at(Stage::Speakers, 0.5);
                     let mut embedder = Embedder::load(model, cfg.threads.min(4))?;

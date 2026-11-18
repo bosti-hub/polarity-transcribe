@@ -122,9 +122,10 @@ export function Recordings({
             <p className="mt-1 text-[13px] leading-relaxed text-fg-2">{t("setup.speakersHint")}</p>
           </div>
           <Segmented
-            value={String(project.speakerCount >= 3 ? 3 : 2) as "2" | "3"}
+            value={String(project.speakerCount === 1 ? 1 : project.speakerCount >= 3 ? 3 : 2) as "1" | "2" | "3"}
             onChange={(v) => onSpeakers(Number(v))}
             options={[
+              { value: "1", label: "1" },
               { value: "2", label: "2" },
               { value: "3", label: "3" },
             ]}

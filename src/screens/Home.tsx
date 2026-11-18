@@ -6,16 +6,19 @@ import {
   AudioLines,
   Download,
   FileAudio,
+  FileVideo,
   FolderOpen,
   FolderInput,
   KeyRound,
   ScrollText,
   Layers,
+  MessagesSquare,
   Mic,
   CircleHelp,
   MoreHorizontal,
   Pencil,
   Plus,
+  Presentation,
   Search,
   Settings as SettingsIcon,
   SlidersHorizontal,
@@ -23,7 +26,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { Frame, OfflineBadge } from "@/components/Frame";
 import { UpdateBanner } from "@/components/UpdateBanner";
@@ -67,6 +70,30 @@ function lastInterviewLanguage(): Language | null {
   }
 }
 
+/**
+ * What a new recording is: a conversation (speakers told apart by voice or microphone) or a
+ * lecture or presentation (one speaker, so voices are not told apart).
+ */
+type RecordingKind = "conversation" | "lecture";
+const KIND_KEY = "pt.recordingKind";
+
+/** The kind chosen last time in the import dialog. */
+function lastKind(): RecordingKind {
+  try {
+    return localStorage.getItem(KIND_KEY) === "lecture" ? "lecture" : "conversation";
+  } catch {
+    return "conversation";
+  }
+}
+
+function rememberKind(kind: RecordingKind) {
+  try {
+    localStorage.setItem(KIND_KEY, kind);
+  } catch {
+    // Not remembered; the dialog starts with "conversation" next time.
+  }
+}
+
 /** An interview name from a recording's file name. */
 function nameFromFile(path: string, t: TFn, lang: Language): string {
   const fromFile = (path.split(/[\\/]/).pop() ?? "").replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").trim();
@@ -74,21 +101,26 @@ function nameFromFile(path: string, t: TFn, lang: Language): string {
   return fromFile || t("home.defaultName", { date });
 }
 
-/** One interview from one or two recordings of the same conversation; opens its setup. */
-async function startInterview(paths: string[], studyId: string | null, t: TFn) {
+/**
+ * One interview from one or two recordings of the same conversation; opens its setup.
+ * `speakers` sets the expected number of speakers (1 for a lecture); otherwise the default.
+ */
+async function startInterview(paths: string[], studyId: string | null, t: TFn, speakers?: number) {
   const { settings, queueImports, go, refreshStudies } = useApp.getState();
-  const project = await api.createProject(nameFromFile(paths[0], t, settings.uiLanguage), lastInterviewLanguage() ?? settings.uiLanguage, studyId);
+  let project = await api.createProject(nameFromFile(paths[0], t, settings.uiLanguage), lastInterviewLanguage() ?? settings.uiLanguage, studyId);
+  if (speakers) project = await api.updateProject(project.id, { speakerCount: speakers });
   if (studyId) void refreshStudies();
   queueImports(project.id, paths.slice(0, 2));
   go({ name: "setup", id: project.id });
 }
 
 /** One interview per recording, imported one after another in the background. */
-async function addInterviews(paths: string[], studyId: string | null, t: TFn) {
+async function addInterviews(paths: string[], studyId: string | null, t: TFn, speakers?: number) {
   const { settings, importInBackground, refreshStudies, toast } = useApp.getState();
   const jobs: { projectId: string; path: string }[] = [];
   for (const path of paths) {
     const p = await api.createProject(nameFromFile(path, t, settings.uiLanguage), lastInterviewLanguage() ?? settings.uiLanguage, studyId);
+    if (speakers) await api.updateProject(p.id, { speakerCount: speakers });
     jobs.push({ projectId: p.id, path });
   }
   importInBackground(jobs);
@@ -151,6 +183,8 @@ export function Home() {
   const [methodsOf, setMethodsOf] = useState<Study | null>(null);
   const [dragging, setDragging] = useState(false);
   const [twoFiles, setTwoFiles] = useState<string[] | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [kind, setKind] = useState<RecordingKind>(lastKind);
   const [newStudy, setNewStudy] = useState(false);
   const [settingsOf, setSettingsOf] = useState<Study | null>(null);
   const [deletingStudy, setDeletingStudy] = useState<Study | null>(null);
@@ -160,10 +194,14 @@ export function Home() {
   useEffect(() => setTab("interviews"), [library]);
 
   const handleFiles = useCallback(
-    async (paths: string[]) => {
+    async (paths: string[], as: RecordingKind = "conversation") => {
       if (paths.length === 0) return;
       try {
-        if (paths.length === 1) await startInterview(paths, studyId, t);
+        // A lecture is one speaker per recording: several files are separate transcriptions.
+        if (as === "lecture") {
+          if (paths.length === 1) await startInterview(paths, studyId, t, 1);
+          else await addInterviews(paths, studyId, t, 1);
+        } else if (paths.length === 1) await startInterview(paths, studyId, t);
         else if (paths.length === 2) setTwoFiles(paths);
         else await addInterviews(paths, studyId, t);
       } catch (e) {
@@ -173,15 +211,28 @@ export function Home() {
     [studyId, t],
   );
 
-  useEffect(() => onFileDrop({ onHover: setDragging, onDrop: (paths) => void handleFiles(paths) }), [handleFiles]);
+  // Files dropped while the import dialog is open are of the kind chosen there; dropped anywhere
+  // else on the start screen they are a conversation, as before.
+  const dropKind = useRef<RecordingKind | null>(null);
+  dropKind.current = importing ? kind : null;
+  const importFiles = useCallback(
+    (paths: string[], as: RecordingKind) => {
+      rememberKind(as);
+      setImporting(false);
+      void handleFiles(paths, as);
+    },
+    [handleFiles],
+  );
+  useEffect(
+    () =>
+      onFileDrop({
+        onHover: setDragging,
+        onDrop: (paths) => (dropKind.current ? importFiles(paths, dropKind.current) : void handleFiles(paths)),
+      }),
+    [handleFiles, importFiles],
+  );
 
-  const create = async () => {
-    try {
-      await handleFiles(await pickAudioFiles(true));
-    } catch (e) {
-      fail(e);
-    }
-  };
+  const create = () => setImporting(true);
 
   const inView = useMemo(() => (projects ?? []).filter((p) => !study || p.studyId === study.id), [projects, study]);
   const queueable = inView.filter((p) => canQueue(p, stageFor(p)));
@@ -342,6 +393,14 @@ export function Home() {
         </div>
       </div>
 
+      <ImportDialog
+        open={importing}
+        title={study ? t("library.newInterview") : t("home.new")}
+        kind={kind}
+        onKind={setKind}
+        onClose={() => setImporting(false)}
+        onFiles={(paths) => importFiles(paths, kind)}
+      />
       <TwoFilesDialog
         paths={twoFiles}
         onClose={() => setTwoFiles(null)}
@@ -697,6 +756,86 @@ function InterviewRow({
 }
 
 // ------------------------------------------------------------------ dialogs
+
+/**
+ * "New transcription": what kind of recording it is, and one place to drop or pick audio or
+ * video (the app takes the sound from a video file).
+ */
+function ImportDialog({
+  open,
+  title,
+  kind,
+  onKind,
+  onClose,
+  onFiles,
+}: {
+  open: boolean;
+  title: string;
+  kind: RecordingKind;
+  onKind: (kind: RecordingKind) => void;
+  onClose: () => void;
+  onFiles: (paths: string[]) => void;
+}) {
+  const t = useT();
+  const browse = async () => {
+    try {
+      const paths = await pickAudioFiles(true);
+      if (paths.length > 0) onFiles(paths);
+    } catch (e) {
+      fail(e);
+    }
+  };
+  const kinds = [
+    { id: "conversation", icon: <MessagesSquare />, label: t("library.kindConversation"), hint: t("library.kindConversationHint") },
+    { id: "lecture", icon: <Presentation />, label: t("library.kindLecture"), hint: t("library.kindLectureHint") },
+  ] as const;
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()} title={title} width={560}>
+      <div className="flex flex-col gap-4 pb-3">
+        <div>
+          <div id="import-kind" className="mb-2 text-[13px] font-medium">
+            {t("library.importKind")}
+          </div>
+          <div role="radiogroup" aria-labelledby="import-kind" className="grid grid-cols-2 gap-2">
+            {kinds.map((k) => (
+              <button
+                key={k.id}
+                type="button"
+                role="radio"
+                aria-checked={kind === k.id}
+                onClick={() => onKind(k.id)}
+                className={cx(
+                  "flex items-start gap-2.5 rounded-xl border p-3 text-left transition-colors",
+                  kind === k.id ? "border-accent bg-accent-soft ring-2 ring-accent/15" : "border-line hover:bg-surface-2",
+                )}
+              >
+                <span className={cx("mt-0.5 shrink-0 [&>svg]:size-4", kind === k.id ? "text-accent" : "text-muted")}>{k.icon}</span>
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-semibold">{k.label}</span>
+                  <span className="mt-0.5 block text-xs leading-relaxed text-fg-2">{k.hint}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void browse()}
+          className="flex flex-col items-center rounded-2xl border-2 border-dashed border-line-strong px-6 py-9 text-center transition-colors hover:border-accent/60 hover:bg-surface-2"
+        >
+          <span className="mb-3 flex gap-2 text-muted" aria-hidden>
+            <FileAudio className="size-7" />
+            <FileVideo className="size-7" />
+          </span>
+          <span className="text-sm font-semibold">{t("library.importDrop")}</span>
+          <span className="mt-0.5 text-[13px] text-fg-2">{t("library.importBrowse")}</span>
+          <span className="mt-3 text-xs text-muted">{t("library.importFormats")}</span>
+        </button>
+        <p className="text-xs leading-relaxed text-muted">{t(kind === "conversation" ? "library.importTwoMics" : "library.importSeveral")}</p>
+      </div>
+    </Dialog>
+  );
+}
 
 function TwoFilesDialog({
   paths,

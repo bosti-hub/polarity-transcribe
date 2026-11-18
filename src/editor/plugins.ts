@@ -398,9 +398,13 @@ function buildPseudonyms(state: EditorState, s: Pick<PseudonymState, "on" | "mat
     // Pseudonyms switched off: a jump still marks the original it landed on.
     return cur && cur.to <= state.doc.content.size ? DecorationSet.create(state.doc, [Decoration.inline(cur.from, cur.to, { class: "search-hit current" })]) : DecorationSet.empty;
   }
-  if (s.matches.length === 0) return DecorationSet.empty;
   const { from, to } = state.selection;
   const decos: Decoration[] = [];
+  // A jump to a term that is not (yet) a rule, as the pseudonymisation check makes: mark the original.
+  if (cur && cur.to <= state.doc.content.size && !s.matches.some(isCurrent)) {
+    decos.push(Decoration.inline(cur.from, cur.to, { class: "search-hit current" }));
+  }
+  if (s.matches.length === 0) return DecorationSet.create(state.doc, decos);
   for (const m of s.matches) {
     if (s.focused && !isCurrent(m) && touches(m, from, to)) {
       decos.push(Decoration.inline(m.from, m.to, { class: "anon-editing" }));

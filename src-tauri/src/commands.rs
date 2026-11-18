@@ -463,6 +463,9 @@ pub struct ProjectExtras {
     reviewed_until: Option<f64>,
     /// Passages the researcher saved as quotes.
     quotes: Vec<Quote>,
+    /// Terms the researcher checked and decided to leave as they are (not identifying), so the
+    /// pseudonymisation check does not ask about them again.
+    keep_terms: Vec<String>,
 }
 
 /// A saved passage: its text as it was when saved, where it is in the audio, and a note.

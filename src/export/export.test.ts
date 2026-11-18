@@ -367,6 +367,7 @@ describe("qdpx", () => {
       ],
       notes: "Pilotfase",
       pseudonyms: [],
+      keepTerms: [],
     };
     const project = (id: string, name: string, participantIds: string[], tags: string[]) =>
       ({ id, name, participantIds, tags, notes: id === "x" ? "Rustige omgeving" : "", interviewer: "Sanne" }) as unknown as import("../lib/types").Project;

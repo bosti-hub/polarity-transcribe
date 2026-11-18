@@ -61,7 +61,8 @@ pub struct Project {
     pub sources: Vec<Option<Source>>,
     /// Manual override for one two-channel file: `Some(true)` = one speaker per channel.
     pub split_stereo: Option<bool>,
-    /// Expected speakers for a single recording (2 or 3; 0 = detect).
+    /// Expected speakers for a single recording: 1 (a lecture or presentation: voices are not
+    /// told apart), 2 or 3. 0 is treated as 2.
     pub speaker_count: u8,
     /// Pauses longer than this get a pause tag (seconds).
     pub pause_threshold: f64,

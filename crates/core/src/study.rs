@@ -39,6 +39,8 @@ pub struct Study {
     pub notes: String,
     /// Replacements applied to every interview of the study when exporting.
     pub pseudonyms: Vec<Pseudonym>,
+    /// Terms checked and left as they are in every interview (not identifying).
+    pub keep_terms: Vec<String>,
 }
 
 /// One replacement: `find` (a name or other identifying detail) becomes `replace`.
@@ -67,6 +69,7 @@ impl Default for Study {
             participants: Vec::new(),
             notes: String::new(),
             pseudonyms: Vec::new(),
+            keep_terms: Vec::new(),
         }
     }
 }

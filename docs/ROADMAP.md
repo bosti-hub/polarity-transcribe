@@ -25,6 +25,9 @@ itself, and it prepares data for analysis software rather than becoming one.
   (to check, checked, anonymised, done).
 - Speakers named automatically by role (interviewer / participant code).
 - Several recordings at once, each its own interview; a transcription queue ("Transcribe all").
+- Recordings that are not interviews, such as a lecture or presentation: "New transcription"
+  opens an import dialog for audio or video that asks the kind of recording, and one speaker
+  skips telling voices apart (done, November 2026).
 - Participants table with attributes, exportable as CSV.
 
 Several participants per interview (focus groups) are supported. After a restart the queue is
@@ -53,11 +56,14 @@ imports in the analysis programs themselves.
 ## 3. Anonymisation for ethics committees (done, November 2026)
 
 Done as described below, with one change: the rules are applied when exporting instead of
-changing the transcript, so the transcript stays complete and checkable (permanent apply is
-still available).
+changing the transcript, so the transcript stays complete and checkable.
 
 - One pseudonym list per study, used consistently across all interviews.
-- Suggestions: capitalised words, names from the names list, places, numbers and dates.
+- Suggestions: capitalised words, names from the names list, places, numbers and dates. Since
+  November 2026 a guided check ("Find automatically") that goes through them one by one
+  (replace, keep, later). A local name-finding model (GLiNER x-small, 189 MB) was tested for it
+  and left out: on a 2h21 Dutch interview it found no real name that the capitalisation rule
+  missed, and its labels (person, place, organisation) were often wrong. See DEVLOG.md.
 - Visible replacements (`[colleague 1]`) instead of silent substitutions.
 - Anonymisation log, exported separately from the transcripts.
 - Original and anonymised version side by side; exports choose which.
@@ -116,4 +122,8 @@ date.
   methodologically sensitive.
 - Translation to English, recording inside the app, encryption per study, sharing a study as a
   single file with a supervisor.
+- A second recogniser as a cross-check (Cohere Transcribe next to Whisper), tested in November
+  2026: about 600 differences per hour of interview, most of them rewording. The useful ones
+  (about 5 to 10 better words per hour) sit where a spell checker already finds a non-word.
+  Not worth a 1.6 GB download and a second engine for now. See DEVLOG.md.
 - Not planned: cloud sync, accounts, meeting bots, dictation.

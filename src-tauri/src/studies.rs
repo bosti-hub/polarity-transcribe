@@ -81,6 +81,7 @@ pub struct StudyPatch {
     tags: Option<Vec<String>>,
     notes: Option<String>,
     pseudonyms: Option<Vec<Pseudonym>>,
+    keep_terms: Option<Vec<String>>,
 }
 
 #[tauri::command]
@@ -127,6 +128,9 @@ pub fn update_study(state: State<'_, AppState>, id: String, patch: StudyPatch) -
             }
             clean.truncate(500);
             s.pseudonyms = clean;
+        }
+        if let Some(list) = patch.keep_terms {
+            s.keep_terms = clean_list(list, 2000);
         }
     })?;
     Ok(study)

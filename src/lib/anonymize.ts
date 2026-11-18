@@ -154,14 +154,30 @@ export function pseudonymSpans(t: Pick<Transcript, "paragraphs">, rules: Anonymi
   return out;
 }
 
-// ------------------------------------------------------------------ suggestions
+// ------------------------------------------------------------------ the pseudonymisation check
 
-export type CandidateKind = "name" | "term" | "date" | "year" | "number" | "postcode" | "email" | "phone";
+/**
+ * What a detail is: a name (a capitalised word in the middle of a sentence), a term from the
+ * study's names list, or something recognised by its form (dates, numbers, addresses).
+ */
+export type DetailKind =
+  | "name"
+  | "term"
+  | "date"
+  | "year"
+  | "number"
+  | "postcode"
+  | "email"
+  | "phone";
 
-export interface Candidate {
+/** A term the pseudonymisation check asks about. */
+export interface Detail {
   term: string;
-  kind: CandidateKind;
+  kind: DetailKind;
+  /** Occurrences the export would still leave as they are (whole words, outside existing rules). */
   count: number;
+  /** Paragraph and character offset of the first occurrence: the check goes through in order. */
+  first: [number, number];
 }
 
 const MONTHS = [
@@ -176,6 +192,9 @@ const NOT_NAMES = new Set([
   "ja", "nee", "nou", "oh", "ah", "dus", "en", "maar", "want", "dan", "als", "of", "je", "jij", "wij", "we", "ze", "zij", "hij",
   "het", "de", "een", "dat", "die", "wat", "hoe", "waarom", "wel", "niet", "ook", "echt", "goed", "precies", "klopt", "zeker",
   "inderdaad", "yes", "no", "so", "and", "but", "well", "right", "yeah", "sure",
+  // Interjections that stand alone, capitalised, after a pause.
+  "alright", "allright", "cheers", "goh", "mmh", "mm", "hm", "prima", "jazeker", "kijk", "vertel", "zeg", "blablabla", "hallo",
+  "hoi", "doei", "sorry", "super", "top", "mooi", "nice", "cool", "bedankt", "dankjewel", "thanks", "hey", "hè", "joh", "tja",
 ]);
 const PARTICLES = new Set(["de", "van", "der", "den", "ter", "ten", "te", "het", "la", "le", "von", "da", "di", "du"]);
 
@@ -183,90 +202,158 @@ const PARTICLES = new Set(["de", "van", "der", "den", "ter", "ten", "te", "het",
 const isCapitalised = (w: string) => /^\p{Lu}\p{Ll}/u.test(w);
 const bare = (w: string) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
 
-/** Words and details in the transcript that may identify someone, most frequent first. */
-export function suggestCandidates(t: Transcript, glossary: string[], covered: AnonymizeRule[]): Candidate[] {
-  const found = new Map<string, Candidate>();
-  const add = (term: string, kind: CandidateKind) => {
-    const key = term.toLowerCase();
-    const c = found.get(key);
-    if (c) c.count++;
-    else found.set(key, { term, kind, count: 1 });
-  };
-  const speakerNames = new Set(t.speakers.map((s) => s.name.toLowerCase()));
-  // Words that occur in lower case more often than capitalised are ordinary words ("Ja",
-  // "Maar") that the recogniser capitalised; a name written in lower case once still counts.
+/** The text of each paragraph as the check reads it: its words, without fillers. */
+export function detailTexts(t: Pick<Transcript, "paragraphs">): string[] {
+  return t.paragraphs.map((p) =>
+    p.items
+      .filter((it): it is Extract<Item, { k: "w" }> => it.k === "w" && !it.f)
+      .map((it) => it.t)
+      .join(" "),
+  );
+}
+
+/** Details recognised by their form, with where they start in `text`. */
+function patternDetails(text: string): { term: string; kind: DetailKind; at: number }[] {
+  const out: { term: string; kind: DetailKind; at: number }[] = [];
+  const add = (m: RegExpMatchArray, kind: DetailKind) => out.push({ term: m[0], kind, at: m.index ?? 0 });
+  for (const m of text.matchAll(/[\w.+-]+@[\w-]+\.[\w.]+/g)) add(m, "email");
+  for (const m of text.matchAll(/(?<!\d)(?:\+31\s?|0)\d(?:[\s-]?\d){8}(?!\d)/g)) add(m, "phone");
+  for (const m of text.matchAll(/\b\d{4}\s?[A-Z]{2}\b/g)) add(m, "postcode");
+  const monthRe = new RegExp(`\\b\\d{1,2}\\s+(?:${MONTHS.join("|")})(?:\\s+\\d{4})?\\b`, "gi");
+  for (const m of text.matchAll(monthRe)) add(m, "date");
+  for (const m of text.matchAll(/\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b/g)) add(m, "date");
+  // Years outside the dates found above (same length, so positions stay right).
+  for (const m of text.replace(monthRe, (d) => " ".repeat(d.length)).matchAll(/\b(?:19|20)\d{2}\b/g)) add(m, "year");
+  // Long numbers (file or client numbers); a full stop after it may end the sentence.
+  for (const m of text.matchAll(/(?<![\d.,])\d{5,}(?![\d,]|[.]\d)/g)) add(m, "number");
+  return out;
+}
+
+/** Capitalised words that do not start a sentence, with particles ("Jan de Vries"). */
+function capitalisedNames(text: string, ordinary: (w: string) => boolean): { term: string; at: number }[] {
+  const out: { term: string; at: number }[] = [];
+  const words = [...text.matchAll(/\S+/g)];
+  for (let i = 0; i < words.length; i++) {
+    const sentenceStart = i === 0 || /[.?!:"]$/.test(words[i - 1][0]);
+    const w = bare(words[i][0]);
+    if (!w || sentenceStart || !isCapitalised(w) || ordinary(w)) continue;
+    const parts = [w];
+    let j = i + 1;
+    while (j < words.length && !/[,.?!;:]$/.test(words[j - 1][0])) {
+      const nw = bare(words[j][0]);
+      if (PARTICLES.has(nw) && j + 1 < words.length && isCapitalised(bare(words[j + 1][0]))) {
+        parts.push(nw, bare(words[j + 1][0]));
+        j += 2;
+      } else if (isCapitalised(nw) && !ordinary(nw)) {
+        parts.push(nw);
+        j++;
+      } else break;
+    }
+    out.push({ term: parts.join(" "), at: (words[i].index ?? 0) + words[i][0].indexOf(w) });
+    i = j - 1;
+  }
+  return out;
+}
+
+/**
+ * The terms the pseudonymisation check goes through, in the order they first occur: names
+ * (capitalised words in the middle of a sentence), terms from the study's names list, and dates,
+ * numbers and addresses recognised by their form. Leaves out what the export already replaces
+ * (`rules`) and what was checked and kept (`keep`).
+ *
+ * A small name-finding language model (GLiNER) was tried for this in November 2026: on a 2h21
+ * Dutch interview it found no real name that this rule missed, so it was left out.
+ */
+export function findDetails(
+  t: Pick<Transcript, "paragraphs">,
+  opts: { glossary: string[]; rules: AnonymizeRule[]; keep: string[] },
+): Detail[] {
+  const texts = detailTexts(t);
+  // How often each word is written with and without a capital in the middle of a sentence: a
+  // word mostly written in lower case is an ordinary word ("Vader" at the start of a sentence).
   const lower = new Map<string, number>();
   const upper = new Map<string, number>();
-  for (const p of t.paragraphs) {
-    for (const it of p.items) {
-      if (it.k !== "w") continue;
-      const w = bare(it.t);
-      const map = /^\p{Ll}/u.test(w) ? lower : upper;
-      map.set(w.toLowerCase(), (map.get(w.toLowerCase()) ?? 0) + 1);
-    }
-  }
-  const lowercase = { has: (w: string) => (lower.get(w) ?? 0) > (upper.get(w) ?? 0) };
-
-  for (const p of t.paragraphs) {
-    // Fillers count for where a sentence starts ("[eh]. Ja"), but are never names.
-    const all = p.items.filter((it): it is Extract<Item, { k: "w" }> => it.k === "w");
-    const words = all.map((it) => (it.f ? "" : it.t));
-    const text = words.filter(Boolean).join(" ");
-
-    // Names: capitalised words that do not start a sentence, with particles ("Jan de Vries").
-    for (let i = 0; i < words.length; i++) {
-      const prev = i > 0 ? all[i - 1].t : "";
-      const sentenceStart = i === 0 || /[.?!:"]$/.test(prev);
-      const w = bare(words[i]);
-      if (!w || sentenceStart || !isCapitalised(w) || NOT_NAMES.has(w.toLowerCase()) || lowercase.has(w.toLowerCase())) continue;
-      if (MONTHS.includes(w.toLowerCase()) || DAYS.includes(w.toLowerCase())) continue;
-      const parts = [w];
-      let j = i + 1;
-      while (j < words.length && !/[,.?!;:]$/.test(words[j - 1])) {
-        const nw = bare(words[j]);
-        if (PARTICLES.has(nw) && j + 1 < words.length && isCapitalised(bare(words[j + 1]))) {
-          parts.push(nw, bare(words[j + 1]));
-          j += 2;
-        } else if (isCapitalised(nw) && !NOT_NAMES.has(nw.toLowerCase()) && !lowercase.has(nw.toLowerCase())) {
-          parts.push(nw);
-          j++;
-        } else break;
+  for (const text of texts) {
+    let start = true;
+    for (const raw of text.split(/\s+/)) {
+      const w = bare(raw);
+      if (w && (/^\p{Ll}/u.test(w) || !start)) {
+        const map = /^\p{Ll}/u.test(w) ? lower : upper;
+        map.set(w.toLowerCase(), (map.get(w.toLowerCase()) ?? 0) + 1);
       }
-      const term = parts.join(" ");
-      if (!speakerNames.has(term.toLowerCase())) add(term, "name");
-      i = j - 1;
+      if (raw) start = /[.?!:"]$/.test(raw);
     }
-
-    for (const m of text.matchAll(/[\w.+-]+@[\w-]+\.[\w.]+/g)) add(m[0], "email");
-    for (const m of text.matchAll(/(?<!\d)(?:\+31\s?|0)\d(?:[\s-]?\d){8}(?!\d)/g)) add(m[0], "phone");
-    for (const m of text.matchAll(/\b\d{4}\s?[A-Z]{2}\b/g)) add(m[0], "postcode");
-    const monthRe = new RegExp(`\\b\\d{1,2}\\s+(?:${MONTHS.join("|")})(?:\\s+\\d{4})?\\b`, "gi");
-    for (const m of text.matchAll(monthRe)) add(m[0], "date");
-    for (const m of text.matchAll(/\b\d{1,2}[-/]\d{1,2}[-/]\d{2,4}\b/g)) add(m[0], "date");
-    for (const m of text.replace(monthRe, " ").matchAll(/\b(?:19|20)\d{2}\b/g)) add(m[0], "year");
-    // Long numbers (file or client numbers); a full stop after it may end the sentence.
-    for (const m of text.matchAll(/(?<![\d.,])\d{5,}(?![\d,]|[.]\d)/g)) add(m[0], "number");
   }
+  const ordinary = (w: string) => {
+    const k = w.toLowerCase();
+    return NOT_NAMES.has(k) || MONTHS.includes(k) || DAYS.includes(k) || (lower.get(k) ?? 0) > (upper.get(k) ?? 0);
+  };
 
-  // Names and terms from the names list that occur in the text.
-  const plain = t.paragraphs.map((p) => p.items.map((it) => ("t" in it ? it.t : "")).join(" ")).join("\n");
-  for (const term of glossary) {
+  const items = new Map<string, { term: string; weight: Map<DetailKind, number>; first: [number, number] }>();
+  const add = (term: string, kind: DetailKind, weight: number, para: number, at: number) => {
+    const key = term.toLowerCase().replace(/\s+/g, " ");
+    let d = items.get(key);
+    if (!d) {
+      d = { term, weight: new Map(), first: [para, at] };
+      items.set(key, d);
+    } else if (para < d.first[0] || (para === d.first[0] && at < d.first[1])) {
+      d.first = [para, at];
+    }
+    d.weight.set(kind, (d.weight.get(kind) ?? 0) + weight);
+  };
+
+  texts.forEach((text, i) => {
+    for (const n of capitalisedNames(text, ordinary)) add(n.term, "name", 1, i, n.at);
+    for (const p of patternDetails(text)) add(p.term, p.kind, 1, i, p.at);
+  });
+  for (const term of opts.glossary) {
     const re = wholeWord(term);
-    const n = re ? (plain.match(re)?.length ?? 0) : 0;
-    if (n > 0 && !found.has(term.toLowerCase())) found.set(term.toLowerCase(), { term, kind: "term", count: n });
+    if (!re) continue;
+    texts.forEach((text, i) => {
+      const m = new RegExp(re.source, re.flags).exec(text);
+      if (m) add(term.trim(), "term", 0.5, i, m.index);
+    });
   }
 
-  const isCovered = (term: string) => covered.some((r) => wholeWord(r.find)?.test(term) ?? false);
-  return [...found.values()].filter((c) => !isCovered(c.term)).sort((a, b) => b.count - a.count || a.term.localeCompare(b.term));
+  // Count what the export would still leave visible: the text with the current rules applied.
+  const rules = mergeRules(opts.rules, []);
+  const remaining = texts.map((text) => anonymizeText(text, rules));
+  const keep = new Set(opts.keep.map((k) => k.trim().toLowerCase().replace(/\s+/g, " ")));
+  const out: Detail[] = [];
+  for (const [key, d] of items) {
+    if (keep.has(key)) continue;
+    const re = wholeWord(d.term);
+    if (!re) continue;
+    const count = remaining.reduce((n, text) => n + (text.match(re)?.length ?? 0), 0);
+    if (count === 0) continue;
+    // The kind with the most evidence.
+    const kind = [...d.weight.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    out.push({ term: d.term, kind, count, first: d.first });
+  }
+  return out.sort((a, b) => a.first[0] - b.first[0] || a.first[1] - b.first[1]);
 }
 
-/** A suggested placeholder for a candidate, in the interview language. */
-export function placeholderFor(kind: CandidateKind, lang: "nl" | "en", n: number): string {
-  const nl: Record<CandidateKind, string> = {
-    name: `[naam ${n}]`, term: `[naam ${n}]`, date: "[datum]", year: "[jaar]", number: "[nummer]", postcode: "[postcode]", email: "[e-mailadres]", phone: "[telefoonnummer]",
-  };
-  const en: Record<CandidateKind, string> = {
-    name: `[name ${n}]`, term: `[name ${n}]`, date: "[date]", year: "[year]", number: "[number]", postcode: "[postcode]", email: "[email address]", phone: "[phone number]",
-  };
-  return (lang === "nl" ? nl : en)[kind];
+const PLACEHOLDER: Record<DetailKind, { nl: string; en: string; numbered: boolean }> = {
+  name: { nl: "naam", en: "name", numbered: true },
+  term: { nl: "naam", en: "name", numbered: true },
+  date: { nl: "datum", en: "date", numbered: false },
+  year: { nl: "jaar", en: "year", numbered: false },
+  number: { nl: "nummer", en: "number", numbered: false },
+  postcode: { nl: "postcode", en: "postcode", numbered: false },
+  email: { nl: "e-mailadres", en: "email address", numbered: false },
+  phone: { nl: "telefoonnummer", en: "phone number", numbered: false },
+};
+
+/**
+ * A suggested pseudonym for a detail, in the interview language. Numbered ones continue the
+ * numbering already in `rules`: with "[naam 1]" and "[naam 2]" taken, a name gets "[naam 3]".
+ */
+export function placeholderFor(kind: DetailKind, lang: "nl" | "en", rules: AnonymizeRule[] = []): string {
+  const p = PLACEHOLDER[kind];
+  const word = p[lang];
+  if (!p.numbered) return `[${word}]`;
+  const re = new RegExp(`^\\[${word} (\\d+)\\]$`, "i");
+  const used = rules.map((r) => Number(re.exec(r.replace.trim())?.[1] ?? 0));
+  return `[${word} ${Math.max(0, ...used) + 1}]`;
 }
+

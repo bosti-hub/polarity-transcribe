@@ -120,6 +120,8 @@ export interface Study {
   notes: string;
   /** Replacements applied to every interview of the study when exporting. */
   pseudonyms: AnonymizeRule[];
+  /** Terms checked and left as they are in every interview (not identifying). */
+  keepTerms: string[];
 }
 
 export interface StudyPatch {
@@ -134,6 +136,7 @@ export interface StudyPatch {
   tags?: string[];
   notes?: string;
   pseudonyms?: AnonymizeRule[];
+  keepTerms?: string[];
 }
 
 export interface AppInfo {
@@ -284,6 +287,8 @@ export interface ProjectExtras {
   reviewedUntil?: number | null;
   /** Passages saved as quotes. */
   quotes?: Quote[];
+  /** Terms checked and left as they are in this interview (not identifying). */
+  keepTerms?: string[];
 }
 
 /** A saved passage: its text when saved, where it is in the audio, and a note. */

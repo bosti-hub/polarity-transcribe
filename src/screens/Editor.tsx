@@ -45,6 +45,7 @@ import "@/editor/editor.css";
 import { InterviewDetails } from "@/components/InterviewDetails";
 import { ExportDialog, type ExportTab } from "@/editor/ExportDialog";
 import { AnonymizePanel, InfoPanel, MOD, QuotesPanel, SparseLinks, SpeakersPanel, TagsPanel, type Report } from "@/editor/panels";
+import { DetailCheck, type CheckSession } from "@/editor/DetailCheck";
 import { Player, type Listen, type PlayerState } from "@/editor/player";
 import {
   doubts as findDoubts,
@@ -412,18 +413,20 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
    * Go to the next or previous occurrence of a pseudonymisation term (as the export matches it).
    * The occurrence stays shown as its pseudonym, highlighted, and is scrolled to the middle.
    */
-  const jumpToTerm = useCallback((find: string, direction: 1 | -1) => {
+  const jumpToTerm = useCallback((find: string, direction: 1 | -1 | 0) => {
     const ed = editorRef.current;
     const box = scrollRef.current;
     if (!ed || !box) return;
     const list = pseudonymMatches(ed.state.doc, [{ find, replace: "" }]);
     if (list.length === 0) return;
     // Start from the previous jump; without one, from the cursor when it is on screen, else from
-    // what is on screen now (the cursor may be far away, or nowhere yet).
+    // what is on screen now (the cursor may be far away, or nowhere yet). 0: the first one.
     const current = pseudonymKey.getState(ed.state)?.current ?? null;
     const r = box.getBoundingClientRect();
     let next: (typeof list)[number] | undefined;
-    if (current && list.some((m) => m.from === current.from)) {
+    if (direction === 0) {
+      next = list[0];
+    } else if (current && list.some((m) => m.from === current.from)) {
       next = direction === 1 ? list.find((m) => m.from > current.from) : [...list].reverse().find((m) => m.from < current.from);
     } else {
       const head = ed.state.selection.head;
@@ -825,6 +828,36 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
   );
   useEffect(() => () => window.clearTimeout(studySaveTimer.current), []);
 
+  // ---------------------------------------------------------------- pseudonymisation check
+  const [check, setCheck] = useState<CheckSession | null>(null);
+  const keepTerms = useMemo(() => [...(extras.keepTerms ?? []), ...(study?.keepTerms ?? [])], [extras.keepTerms, study]);
+  const addRule = useCallback(
+    (rule: AnonymizeRule, studyWide: boolean) => {
+      if (studyWide && study) saveStudyRules([...studyRules, rule]);
+      else saveExtras({ ...extras, anonymize: [...extras.anonymize, rule] });
+    },
+    [study, studyRules, saveStudyRules, extras, saveExtras],
+  );
+  const keepTerm = useCallback(
+    (term: string, studyWide: boolean) => {
+      if (studyWide && study) {
+        const list = [...study.keepTerms, term];
+        useApp.getState().putStudy({ ...study, keepTerms: list });
+        api.updateStudy(study.id, { keepTerms: list }).catch((e) => toast(errorMessage(e), "error"));
+      } else {
+        saveExtras({ ...extras, keepTerms: [...(extras.keepTerms ?? []), term] });
+      }
+    },
+    [study, extras, saveExtras, toast],
+  );
+  /** Play from just before the occurrence the check (or the panel's arrows) highlighted. */
+  const listenAtHighlight = useCallback(() => {
+    const ed = editorRef.current;
+    const cur = ed ? pseudonymKey.getState(ed.state)?.current : null;
+    const timing = ed && cur ? timingAt(ed.state, cur.from) : null;
+    if (timing) player.seek(Math.max(0, timing.s - 1.5), true);
+  }, [player]);
+
   // ---------------------------------------------------------------- quote export
   const [exportTab, setExportTab] = useState<ExportTab>("transcript");
   const buildQuoteExport = useCallback(
@@ -1164,6 +1197,22 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
                 onShowInText={setShowPseudonyms}
                 onJump={jumpToTerm}
                 selection={() => (editorRef.current ? selectedPhrase(editorRef.current.state) : "")}
+                check={
+                  <DetailCheck
+                    session={check}
+                    onSession={setCheck}
+                    lang={transcript.language}
+                    inStudy={!!study}
+                    getTranscript={getTranscript}
+                    glossary={[...(study?.glossary ?? []), ...(details.glossary ?? [])]}
+                    rules={previewRules}
+                    keep={keepTerms}
+                    onReplace={addRule}
+                    onKeep={keepTerm}
+                    onShow={jumpToTerm}
+                    onListen={listenAtHighlight}
+                  />
+                }
               />
             )}
             {panel === "quotes" && (

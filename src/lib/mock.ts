@@ -114,6 +114,7 @@ const studies: Study[] = [
     attributes: ["Functie", "Leeftijd", "Locatie"],
     tags: ["Pilot", "Teamleider", "Avonddienst"],
     pseudonyms: [{ find: "Zuyderland", replace: "[ziekenhuis]" }],
+    keepTerms: [],
     participants: [
       participant("R01", { Functie: "Verpleegkundige", Leeftijd: "30-39", Locatie: "Heerlen" }),
       participant("R02", { Functie: "Teamleider", Leeftijd: "40-49", Locatie: "Sittard" }),
@@ -138,6 +139,7 @@ const studies: Study[] = [
     participants: [],
     notes: "",
     pseudonyms: [],
+    keepTerms: [],
   },
 ];
 
@@ -185,6 +187,8 @@ const SAMPLE: [string, string][] = [
   ["S2", "Ja, ik kijk even. Oh ja, er is wel iets wat, wat wel gebeurd is, wat gewoon heel tieferend is voor, [uhm], voor mijn werk en zeg maar hoe dat dan gaat. [b:S1:hm-hm] Dus dat heb ik wel opgeschreven. Ik werk, zeg maar, met heel veel verschillende disciplines samen en over het algemeen gaat het wel goed, hoor. Alleen het probleem komt dus naar voren als de taakverdeling niet duidelijk is."],
   ["S1", "Kun je wat meer vertellen over dat specifieke voorbeeld?"],
   ["S2", "Nou, [ehm], ik heb een cliënt, [eh], zonder er te veel in detail te gaan, dat is een man die woont al dertig jaar in Nederland. [p:3.4] En die is zijn pas kwijt."],
+  ["S1", "En wie heeft dat toen opgepakt?"],
+  ["S2", "Mijn collega Saskia de Wit uit Heerlen. Die heeft op 12 maart 2025 met Zuyderland gebeld, en daarna met de gemeente Sittard."],
 ];
 
 function buildTranscript(): Transcript {

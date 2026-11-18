@@ -70,7 +70,11 @@ For a precise statement you can give to an ethics committee or supervisor, see
   interviewer, the other speaker gets the participant code.
 - A single recording works without a study too.
 
-**Importing audio**
+**Importing audio and video**
+- Import audio or video (mp3, m4a, wav, flac, ogg, mp4, mov, mkv, webm and more; from a video
+  the app takes the sound). **New transcription** asks what kind of recording it is: a
+  conversation or interview, or a lecture or presentation. A lecture has one speaker, so the app
+  does not try to tell voices apart (also available in the setup as 1 speaker).
 - Import one or two audio files (for example one per speaker), or a single split-stereo file with
   one speaker per channel.
 - Automatic detection of whether a stereo file is split-stereo (one speaker per channel) or a
@@ -121,10 +125,13 @@ The app chooses the most reliable method the recording allows, and tells you whi
 
 **Pseudonymisation**
 - One pseudonym list per study, used for all its interviews, plus rules for a single interview.
-- Suggestions for names, places, dates, years, numbers, postcodes, e-mail addresses and phone
-  numbers found in the transcript.
+- **Find automatically** goes through the transcript term by term: names (capitalised words in
+  the middle of a sentence), terms from the names list, dates, years, long numbers, postcodes,
+  e-mail addresses and phone numbers. For each one you see it in the text (and can listen to it),
+  then replace it with a numbered pseudonym (`[naam 3]`), keep it, or leave it for later. Kept
+  terms are not asked about again in the study.
 - Applied when exporting: the transcript in the app stays complete, everything that leaves the
-  app is pseudonymised (text, speaker names, titles, notes). Or apply it permanently.
+  app is pseudonymised (text, speaker names, titles, notes).
 - A separate pseudonym key (CSV) to store apart from the transcripts.
 
 **Export**
@@ -291,7 +298,8 @@ click **Copy** and paste it into your question or into a
 
 ## Building from source
 
-See [docs/BUILDING.md](docs/BUILDING.md).
+See [docs/BUILDING.md](docs/BUILDING.md). Experiments that were tried and not adopted, with what
+was measured, are in [docs/DEVLOG.md](docs/DEVLOG.md).
 
 ## License
 

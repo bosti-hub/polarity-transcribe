@@ -242,6 +242,7 @@ export function AnonymizePanel({
   onShowInText,
   onJump,
   selection,
+  check,
 }: {
   /** Null when the interview is not in a study. */
   studyName: string | null;
@@ -257,6 +258,8 @@ export function AnonymizePanel({
   onJump: (find: string, direction: 1 | -1) => void;
   /** The words selected in the text, to start a new rule with. */
   selection: () => string;
+  /** The pseudonymisation check (finds names and goes through them). */
+  check?: React.ReactNode;
 }) {
   const t = useT();
   const total = [...studyCounts, ...interviewCounts].reduce((a, b) => a + b, 0);
@@ -268,6 +271,8 @@ export function AnonymizePanel({
         <span className="text-[13px]">{t("editor.anonShowInText")}</span>
         <Switch checked={showInText} onChange={onShowInText} label={t("editor.anonShowInText")} />
       </label>
+
+      {check}
 
       {studyName !== null && (
         <section>

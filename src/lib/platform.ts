@@ -13,7 +13,7 @@ export function isAudioPath(path: string): boolean {
 export async function pickAudioFiles(multiple: boolean): Promise<string[]> {
   if (!isTauri) return multiple ? ["C:/mock/interview-a.m4a", "C:/mock/interview-b.m4a"] : ["C:/mock/interview.m4a"];
   const { open } = await import("@tauri-apps/plugin-dialog");
-  const picked = await open({ multiple, filters: [{ name: "Audio", extensions: AUDIO_EXTENSIONS }] });
+  const picked = await open({ multiple, filters: [{ name: "Audio / video", extensions: AUDIO_EXTENSIONS }] });
   if (!picked) return [];
   return Array.isArray(picked) ? picked : [picked];
 }
