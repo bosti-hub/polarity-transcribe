@@ -3,6 +3,48 @@
 Experiments that were tried and not (yet) adopted, with what was measured and why. Newest first.
 Decisions that did make it into the app are in [ROADMAP.md](ROADMAP.md).
 
+## November 2026: Qwen3-ASR 1.7B (looked into, not run)
+
+**Question.** After the Cohere test below: would [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR)
+1.7B (Alibaba, Apache-2.0, released early 2026) be a better recogniser for Dutch interviews than
+Whisper? Nothing was downloaded or run. This is a desk review of the published material (19
+November 2026).
+
+**Findings**
+- **Dutch is supported for recognition.** It is one of the 30 named languages of the 1.7B and
+  0.6B models (plus 22 Chinese dialects).
+- **No Dutch word timestamps.** Timestamps come from a separate model, Qwen3-ForcedAligner-0.6B,
+  which covers 11 languages: Chinese, English, Cantonese, French, German, Italian, Japanese,
+  Korean, Portuguese, Russian and Spanish. Dutch is not one of them, and each call is limited to
+  about 5 minutes of speech. The editor needs a time for every word (click to listen, uncertain
+  words, quotes, subtitles), so for Dutch the app would still have to align the words some other
+  way, for example by running Whisper as well.
+- **Not better on Dutch.** Across all languages the technical report puts it slightly ahead of
+  Whisper large-v3 (FLEURS 4.90 vs 5.27 WER, Common Voice 9.18 vs 10.77), but it gives no figure
+  per language. An independent test on FLEURS (about 150 read sentences per language) measured
+  Dutch at **7.4% WER for Qwen3-ASR 1.7B against 5.7% for Whisper large-v3 turbo**, the model the
+  app uses. In that test Whisper turbo also won on most other smaller European languages (Swedish,
+  Danish, Finnish, Polish, Czech and others), while Qwen3-ASR won on English, German and French. A
+  community fine-tune reports 6.7% zero-shot on Dutch Common Voice. None of this is
+  conversational speech, so it says little about interviews, but it shows no advantage for Dutch.
+- **Probably not verbatim.** Like Cohere, it is trained to produce clean text. The app's verbatim
+  mode depends on Whisper writing out fillers such as "[uhm]".
+- **Hard to run in the app.** There is no llama.cpp or whisper.cpp support. GGUF builds run in
+  transcribe.cpp or CrispASR, and the transcribe.cpp build failed on this machine during the Cohere
+  test (see the workaround below). The aligner needs a fork branch of transcribe.cpp that is not
+  upstream yet.
+
+**Decision.** Not tested further. It would be a second engine and a download of about 2 GB (plus
+an aligner without Dutch) for a model that, on the evidence available, does not recognise Dutch
+better than what the app already uses. Worth another look only if a later version adds Dutch to
+the aligner and an independent Dutch benchmark on conversational speech shows a clear gain.
+
+**Sources**
+- [Qwen3-ASR on GitHub](https://github.com/QwenLM/Qwen3-ASR): languages, aligner languages, benchmark table
+- [Qwen3-ASR technical report](https://arxiv.org/abs/2601.21337) (arXiv 2601.21337)
+- [Qwen3-ASR vs Whisper on FLEURS, 30 languages](https://whispernotes.app/blog/qwen3-asr-vs-whisper) (independent, MLX 8-bit vs whisper.cpp)
+- [Qwen3-ForcedAligner GGUF for transcribe.cpp](https://huggingface.co/Adit2K/Qwen3-ForcedAligner-0.6B-gguf) and the [CrispASR discussion](https://huggingface.co/Qwen/Qwen3-ASR-0.6B/discussions/12)
+
 ## November 2026: a second recogniser and a name-finding model
 
 Two ideas were tested on the same Dutch interview: a second speech model as a "second opinion"

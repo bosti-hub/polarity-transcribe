@@ -292,7 +292,7 @@ copy its new template (`tauri-bundler`'s `src/bundle/windows/nsis/installer.nsi`
 change marked "Polarity Transcribe:" again.
 
 To try the update flow locally, build a newer version with
-`--config '{"version":"0.1.1"}'` and `createUpdaterArtifacts`, serve its installer and a
+`--config '{"version":"0.1.2"}'` and `createUpdaterArtifacts`, serve its installer and a
 `latest.json` from a local web server, and point a test build's `endpoints` at it (with
 `"dangerousInsecureTransportProtocol": true` for plain http).
 

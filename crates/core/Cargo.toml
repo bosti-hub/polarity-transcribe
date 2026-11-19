@@ -20,3 +20,4 @@ uuid = { version = "1", features = ["v4"] }
 rustfft = "6"
 sha2 = "0.10"
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "download-binaries", "tls-native", "copy-dylibs", "api-31"] }
+zip = { version = "9.7.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }

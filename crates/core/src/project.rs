@@ -189,6 +189,8 @@ pub mod files {
     pub const PROJECT: &str = "project.json";
     pub const TRANSCRIPT: &str = "transcript.json";
     pub const TRANSCRIPT_BACKUP: &str = "transcript.backup.json";
+    /// Editor state that is not transcript text (rules, labels, quotes).
+    pub const EXTRAS: &str = "extras.json";
     pub const JOB_DIR: &str = "job";
 
     pub fn pcm(slot: usize, right: bool) -> String {

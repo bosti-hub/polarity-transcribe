@@ -15,7 +15,7 @@ import type { Edge, LaneSpec, TimelineModel, TrackSpec } from "./timelineModel";
 import { mergePeaks } from "./waveDraw";
 
 
-const toastError = (e: unknown) => useApp.getState().toast(errorMessage(e), "error");
+const toastError = (e: unknown) => void useApp.getState().toast(errorMessage(e), "error");
 
 /** Identity of an imported file; changes when a slot is replaced. */
 export function sourceKey(s: Source, slot: number): string {

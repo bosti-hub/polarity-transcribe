@@ -86,6 +86,7 @@ function project(id: string, name: string, status: Project["status"], sources: (
     error: status === "failed" ? "FFmpeg failed: invalid data found when processing input" : null,
     dir: `C:\\mock\\${id}`,
     layout: both ? "dual_file" : sources[0]?.stereo.kind === "split_speakers" ? "split_stereo" : "single",
+    hasRecordings: true,
     studyId: null,
     participantIds: [],
     interviewDate: null,
@@ -497,6 +498,12 @@ export async function mockInvoke(cmd: string, args: Record<string, unknown> = {}
     case "export_recording":
       await sleep(300);
       return;
+    case "export_archive":
+      await sleep(300);
+      return (args.ids as string[] | undefined)?.length || 1;
+    case "import_archive":
+      await sleep(300);
+      return { studyId: null, newStudy: false, interviews: 1 };
     case "write_file":
     case "reveal_in_folder":
       return;

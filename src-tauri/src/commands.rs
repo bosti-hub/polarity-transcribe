@@ -23,12 +23,21 @@ pub struct ProjectView {
     /// Absolute path of the project folder (for media URLs).
     dir: String,
     layout: Layout,
+    /// The decoded recordings are here, so the interview can be transcribed again. False for an
+    /// interview imported from a colleague's export, which holds only the playback audio.
+    has_recordings: bool,
 }
 
 fn view(state: &AppState, project: Project) -> CmdResult<ProjectView> {
-    let dir = state.store.dir(&project.id).map_err(err)?.to_string_lossy().into_owned();
+    let path = state.store.dir(&project.id).map_err(err)?;
+    let has_recordings = project
+        .sources
+        .iter()
+        .enumerate()
+        .all(|(slot, s)| s.is_none() || path.join(files::pcm(slot, false)).is_file());
+    let dir = path.to_string_lossy().into_owned();
     let layout = project.layout();
-    Ok(ProjectView { project, dir, layout })
+    Ok(ProjectView { project, dir, layout, has_recordings })
 }
 
 #[derive(Serialize)]
@@ -487,18 +496,17 @@ pub struct Quote {
     created_at: u64,
 }
 
-const EXTRAS_FILE: &str = "extras.json";
 
 #[tauri::command]
 pub fn load_extras(state: State<'_, AppState>, id: String) -> CmdResult<ProjectExtras> {
     let dir = state.store.dir(&id).map_err(err)?;
-    Ok(pt_core::fsutil::read_json(&dir.join(EXTRAS_FILE)).unwrap_or_default())
+    Ok(pt_core::fsutil::read_json(&dir.join(files::EXTRAS)).unwrap_or_default())
 }
 
 #[tauri::command]
 pub fn save_extras(state: State<'_, AppState>, id: String, extras: ProjectExtras) -> CmdResult<()> {
     let dir = state.store.dir(&id).map_err(err)?;
-    pt_core::fsutil::write_json(&dir.join(EXTRAS_FILE), &extras).map_err(err)
+    pt_core::fsutil::write_json(&dir.join(files::EXTRAS), &extras).map_err(err)
 }
 
 /// Diagnostics of the last transcription (sync and speaker-separation quality).

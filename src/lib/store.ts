@@ -66,7 +66,8 @@ interface AppState {
   goBack: () => void;
   updateSettings: (patch: Partial<Settings>) => void;
   refreshModels: () => Promise<void>;
-  toast: (message: string, tone?: Toast["tone"], action?: Toast["action"]) => void;
+  /** Show a message; returns its id, for `dismissToast`. */
+  toast: (message: string, tone?: Toast["tone"], action?: Toast["action"]) => number;
   dismissToast: (id: number) => void;
   showLibrary: (view: string) => void;
   refreshStudies: () => Promise<Study[]>;
@@ -170,6 +171,7 @@ export const useApp = create<AppState>((set, get) => ({
     const id = ++toastId;
     set((s) => ({ toasts: [...s.toasts, { id, message, tone, action }] }));
     setTimeout(() => get().dismissToast(id), tone === "error" ? 9000 : 5000);
+    return id;
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 

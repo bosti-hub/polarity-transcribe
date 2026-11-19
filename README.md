@@ -61,7 +61,7 @@ For a precise statement you can give to an ethics committee or supervisor, see
   file), interviewer, tags, notes and progress (to check, checked, anonymised, done), with
   filters in the study.
 - Search all transcripts of a study at once; every hit opens the transcript at that moment.
-- Save quotes while you read (Ctrl+Q) and get one list per study, with participant code and time,
+- Save quotes while you read (Ctrl+U, ⌘U on a Mac) and get one list per study, with participant code and time,
   as Word or CSV.
 - A generated methods paragraph (Dutch or English) that describes how the study was transcribed.
 - Drop several recordings at once: each becomes its own interview. "Transcribe all" queues them,
@@ -69,6 +69,9 @@ For a precise statement you can give to an ethics committee or supervisor, see
 - In a study the speakers are named automatically: whoever asks the questions becomes the
   interviewer, the other speaker gets the participant code.
 - A single recording works without a study too.
+- Share a study or an interview with a fellow student as one ZIP file (transcript, recording,
+  quotes, participants and pseudonymisation rules), named after it with the date and time.
+  **Import ZIP** adds it on the other computer; what is already there arrives as a copy next to it.
 
 **Importing audio and video**
 - Import audio or video (mp3, m4a, wav, flac, ogg, mp4, mov, mkv, webm and more; from a video

@@ -11,7 +11,7 @@ import { useApp } from "@/lib/store";
 import { formatDuration } from "@/lib/transcript";
 import type { JobProgress, JobStage, Project } from "@/lib/types";
 
-const toastError = (e: unknown) => useApp.getState().toast(errorMessage(e), "error");
+const toastError = (e: unknown) => void useApp.getState().toast(errorMessage(e), "error");
 
 function stageList(project: Project | null, current: JobStage | undefined): JobStage[] {
   const list: JobStage[] = ["prepare"];

@@ -97,7 +97,7 @@ export function StudyQuotes({ study, projects, onExport }: { study: Study; proje
         </Button>
       </div>
       {lines.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-10 text-center text-[13px] text-fg-2">{t("quotes.studyEmpty", { key: shortcutLabel(`${MOD}+Q`) })}</p>
+        <p className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-10 text-center text-[13px] text-fg-2">{t("quotes.studyEmpty", { key: shortcutLabel(`${MOD}+U`) })}</p>
       ) : (
         <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
           {lines.map(({ projectId, s: at, line: q }, i) => (

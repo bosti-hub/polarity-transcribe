@@ -20,6 +20,7 @@ import {
   Play,
   Repeat,
   RotateCcw,
+  Share2,
   RotateCw,
   ShieldCheck,
   Sparkles,
@@ -73,6 +74,7 @@ import type { QuoteExportItem } from "@/components/QuoteExport";
 import { participantCodes, recordingOffset } from "@/lib/interviews";
 import { isModifierOnly, keyCombo } from "@/lib/keys";
 import { api, errorMessage, projectFileUrl } from "@/lib/api";
+import { exportShare } from "@/lib/share";
 import { DEFAULT_TAGS, useT } from "@/lib/i18n";
 import { useApp } from "@/lib/store";
 import { formatClock } from "@/lib/transcript";
@@ -944,7 +946,7 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
         setSearch((s) => ({ open: true, focus: s.focus + 1 }));
         return;
       }
-      if (mod && !e.shiftKey && e.key.toLowerCase() === "q" && !inField) {
+      if (mod && !e.shiftKey && e.key.toLowerCase() === "u" && !inField) {
         done();
         addQuote();
         return;
@@ -1040,8 +1042,11 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
               </IconButton>
             }
           >
-            <MenuItem icon={<RotateCcw />} onSelect={() => void leave({ name: "setup", id: project.id })}>
-              {t("editor.retranscribe")}
+            <MenuItem icon={<RotateCcw />} disabled={!project.hasRecordings} onSelect={() => void leave({ name: "setup", id: project.id })}>
+              {t(project.hasRecordings ? "editor.retranscribe" : "editor.retranscribeNoRecordings")}
+            </MenuItem>
+            <MenuItem icon={<Share2 />} onSelect={() => void flush().then(() => exportShare(t, { project }))}>
+              {t("share.export")}
             </MenuItem>
           </Menu>
           <Button variant="primary" icon={<Download className="size-4" />} onClick={() => void flush().then(() => {
@@ -1116,7 +1121,7 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
         <IconButton label={t("common.redo")} shortcut={`${MOD}+Shift+Z`} size="sm" onMouseDown={(e) => e.preventDefault()} onClick={() => editorRef.current?.commands.redo()}>
           <Redo2 className="size-4" />
         </IconButton>
-        <IconButton label={t("quotes.add")} shortcut={`${MOD}+Q`} size="sm" onMouseDown={(e) => e.preventDefault()} onClick={addQuote}>
+        <IconButton label={t("quotes.add")} shortcut={`${MOD}+U`} size="sm" onMouseDown={(e) => e.preventDefault()} onClick={addQuote}>
           <QuoteIcon className="size-4" />
         </IconButton>
         <IconButton label={t("editor.find")} shortcut={`${MOD}+F`} size="sm" active={search.open} onClick={() => setSearch((s) => ({ open: !s.open, focus: s.focus + 1 }))}>

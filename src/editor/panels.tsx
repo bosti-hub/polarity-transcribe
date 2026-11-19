@@ -343,12 +343,12 @@ export function QuotesPanel({
   const t = useT();
   return (
     <div>
-      <PanelTitle hint={t("quotes.hint", { key: shortcutLabel(`${MOD}+Q`) })}>{t("quotes.title")}</PanelTitle>
+      <PanelTitle hint={t("quotes.hint", { key: shortcutLabel(`${MOD}+U`) })}>{t("quotes.title")}</PanelTitle>
       <div className="mb-3 flex flex-wrap gap-2">
         {/* Keeps the selection in the transcript: the button must not take the focus on press. */}
         <Button variant="secondary" size="sm" icon={<QuoteIcon className="size-3.5" />} onMouseDown={(e) => e.preventDefault()} onClick={onAdd}>
           {t("quotes.add")}
-          <Kbd>{shortcutLabel(`${MOD}+Q`)}</Kbd>
+          <Kbd>{shortcutLabel(`${MOD}+U`)}</Kbd>
         </Button>
         {quotes.length > 0 && (
           <Button variant="secondary" size="sm" icon={<Download className="size-3.5" />} onClick={onExport}>
@@ -461,6 +461,7 @@ export function InfoPanel({
     [t("editor.confirmWord"), [[MOD, "Enter"]]],
     [t("editor.scLoop"), [[MOD, "L"]]],
     [t("editor.scTag"), [[MOD, "1–9"]]],
+    [t("quotes.add"), [[MOD, "U"]]],
     [t("editor.scSplit"), [["Enter"]]],
     [t("editor.scMerge"), [["Backspace"]]],
     [t("editor.scFind"), [[MOD, "F"]]],

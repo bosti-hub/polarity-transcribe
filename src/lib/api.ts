@@ -6,6 +6,7 @@ import { mockInvoke, mockListen } from "./mock";
 import type {
   AppInfo,
   DownloadProgress,
+  ImportedArchive,
   JobProgress,
   Language,
   ModelInfo,
@@ -96,6 +97,13 @@ export const api = {
   copyOriginal: (id: string, dest: string) => invoke<boolean>("copy_original", { id, dest }),
   /** Save the interview's playback audio (trimmed, aligned, mono) at `dest` (.mp3, .m4a or .wav). */
   exportRecording: (id: string, dest: string) => invoke<void>("export_recording", { id, dest }),
+  /**
+   * Write a whole study (`studyId`) or the interviews `ids` to a ZIP file for a colleague.
+   * Returns how many interviews went in (ones not transcribed yet are left out).
+   */
+  exportArchive: (studyId: string | null, ids: string[], dest: string) => invoke<number>("export_archive", { studyId, ids, dest }),
+  /** Import such a ZIP file; `copySuffix` is added to the name of a study or interview already here. */
+  importArchive: (path: string, copySuffix: string) => invoke<ImportedArchive>("import_archive", { path, copySuffix }),
 };
 
 /** URL the webview can load for a file inside a project folder. */

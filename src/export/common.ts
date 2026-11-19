@@ -86,3 +86,32 @@ export function sanitizeFileName(name: string, extension: string): string {
   if (WINDOWS_RESERVED.test(base)) base = `_${base}`;
   return `${base}.${extension}`;
 }
+
+/** Longest name part of the file name, in characters; the date and time come after it. */
+const MAX_NAME = 60;
+
+/** Local date and time as "2026-11-19 1430": sorts by time and tells versions apart. */
+export function stamp(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}${pad(date.getMinutes())}`;
+}
+
+/**
+ * File name of an export: the interview's or study's name without characters that are not
+ * allowed in file names, shortened (at a word where possible), then the date and time.
+ */
+export function shareFileName(name: string, date: Date): string {
+  let base = name
+    .replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const chars = Array.from(base);
+  if (chars.length > MAX_NAME) {
+    const cut = chars.slice(0, MAX_NAME).join("");
+    const space = cut.lastIndexOf(" ");
+    base = space > MAX_NAME / 2 ? cut.slice(0, space) : cut;
+  }
+  base = base.replace(/[. ]+$/, "") || "Polarity Transcribe";
+  // With the date after it, the name is never a reserved Windows name such as "CON".
+  return `${base} ${stamp(date)}.zip`;
+}

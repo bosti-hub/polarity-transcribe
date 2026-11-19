@@ -6,6 +6,7 @@ mod jobs;
 #[cfg(target_os = "macos")]
 mod menu;
 mod models;
+mod share;
 mod state;
 mod studies;
 
@@ -60,6 +61,8 @@ pub fn run() {
             commands::reveal_in_folder,
             commands::open_project_page,
             diagnostics::system_info,
+            share::export_archive,
+            share::import_archive,
             models::list_models,
             models::download_model,
             models::cancel_download,

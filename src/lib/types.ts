@@ -53,6 +53,8 @@ export interface Project {
   /** Absolute path of the project folder. */
   dir: string;
   layout: Layout;
+  /** The decoded recordings are here, so it can be transcribed again (not for an imported interview). */
+  hasRecordings: boolean;
 
   // ---- interview details
   studyId: string | null;
@@ -333,4 +335,13 @@ export interface Settings {
   keyForward: string;
   /** Underline spelling mistakes in the editor. */
   spellcheck: boolean;
+}
+
+/** What an imported ZIP file brought in. */
+export interface ImportedArchive {
+  /** The study the interviews are in now, if any. */
+  studyId: string | null;
+  /** The study was created by the import. */
+  newStudy: boolean;
+  interviews: number;
 }

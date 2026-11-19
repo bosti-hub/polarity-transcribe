@@ -13,6 +13,7 @@ pub mod lexicon;
 pub mod models;
 pub mod pipeline;
 pub mod project;
+pub mod share;
 pub mod spatial;
 pub mod stereo;
 pub mod study;

@@ -17,7 +17,7 @@ import { activeModel, useApp } from "@/lib/store";
 import { formatDuration } from "@/lib/transcript";
 import type { Project } from "@/lib/types";
 
-const toastError = (e: unknown) => useApp.getState().toast(errorMessage(e), "error");
+const toastError = (e: unknown) => void useApp.getState().toast(errorMessage(e), "error");
 
 type Imports = Record<number, ImportState | undefined>;
 

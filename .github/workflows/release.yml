@@ -38,14 +38,14 @@ jobs:
             target: x86_64-pc-windows-msvc
             features: vulkan
             bundles: nsis
-            # Shown in the file names: Polarity-Transcribe-0.1.1-Windows-setup.exe
+            # Shown in the file names: Polarity-Transcribe-0.1.2-Windows-setup.exe
             asset: Windows
           - os: macos-15 # Apple Silicon
             target: aarch64-apple-darwin
             features: metal
             # "app" produces the .app.tar.gz the in-app updater installs.
             bundles: app,dmg
-            # Polarity-Transcribe-0.1.1-Mac.dmg
+            # Polarity-Transcribe-0.1.2-Mac.dmg
             asset: Mac
     runs-on: ${{ matrix.os }}
 

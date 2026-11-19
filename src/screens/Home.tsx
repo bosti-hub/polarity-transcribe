@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   AudioLines,
   Download,
+  FileArchive,
   FileAudio,
   FileVideo,
   FolderOpen,
@@ -21,6 +22,7 @@ import {
   Presentation,
   Search,
   Settings as SettingsIcon,
+  Share2,
   SlidersHorizontal,
   Sparkles,
   Trash2,
@@ -36,6 +38,7 @@ import { useT } from "@/lib/i18n";
 import type { TFn } from "@/lib/i18n";
 import { canQueue, interviewDate, participantCodes, STAGE_GROUPS, STAGE_STYLE, stageOf, type Stage } from "@/lib/interviews";
 import { onFileDrop, pickAudioFiles } from "@/lib/platform";
+import { exportShare, importShare } from "@/lib/share";
 import { activeModel, useApp } from "@/lib/store";
 import { formatDuration } from "@/lib/transcript";
 import type { Language, Project, ProjectPatch, Study } from "@/lib/types";
@@ -214,6 +217,20 @@ export function Home() {
     [studyId, t],
   );
 
+  /** ZIP files shared by a colleague, one after another; no paths = pick one. */
+  const importArchives = useCallback(
+    async (paths: string[] = []) => {
+      const lang = useApp.getState().settings.uiLanguage;
+      if (paths.length === 0) {
+        if (await importShare(t, lang)) reload();
+        return;
+      }
+      for (const path of paths) await importShare(t, lang, path);
+      reload();
+    },
+    [t, reload],
+  );
+
   // Files dropped while the import dialog is open are of the kind chosen there; dropped anywhere
   // else on the start screen they are a conversation, as before.
   const dropKind = useRef<RecordingKind | null>(null);
@@ -231,8 +248,12 @@ export function Home() {
       onFileDrop({
         onHover: setDragging,
         onDrop: (paths) => (dropKind.current ? importFiles(paths, dropKind.current) : void handleFiles(paths)),
+        onArchives: (paths) => {
+          setImporting(false);
+          void importArchives(paths);
+        },
       }),
-    [handleFiles, importFiles],
+    [handleFiles, importFiles, importArchives],
   );
 
   const create = () => setImporting(true);
@@ -311,6 +332,8 @@ export function Home() {
           setExportingStudy(s);
         }}
         onMethods={setMethodsOf}
+        onShare={(s) => void exportShare(t, { study: s, inStudy: counts[s.id] ?? 0 })}
+        onImport={() => void importArchives()}
         onExportKey={(s) => {
           const lang = useApp.getState().settings.uiLanguage;
           void exportPseudonymKey(s, (projects ?? []).filter((p) => p.studyId === s.id), lang).catch(fail);
@@ -403,6 +426,10 @@ export function Home() {
         onKind={setKind}
         onClose={() => setImporting(false)}
         onFiles={(paths) => importFiles(paths, kind)}
+        onArchive={() => {
+          setImporting(false);
+          void importArchives();
+        }}
       />
       <TwoFilesDialog
         paths={twoFiles}
@@ -449,6 +476,8 @@ function Sidebar({
   onExport,
   onExportKey,
   onMethods,
+  onShare,
+  onImport,
   onDelete,
 }: {
   studies: Study[];
@@ -460,6 +489,8 @@ function Sidebar({
   onExport: (s: Study) => void;
   onExportKey: (s: Study) => void;
   onMethods: (s: Study) => void;
+  onShare: (s: Study) => void;
+  onImport: () => void;
   onDelete: (s: Study) => void;
 }) {
   const t = useT();
@@ -503,6 +534,9 @@ function Sidebar({
               <MenuItem icon={<Download />} onSelect={() => onExport(s)}>
                 {t("studyExport.title")}
               </MenuItem>
+              <MenuItem icon={<Share2 />} onSelect={() => onShare(s)}>
+                {t("share.export")}
+              </MenuItem>
               <MenuItem icon={<KeyRound />} onSelect={() => onExportKey(s)}>
                 {t("studyExport.keyTitle")}
               </MenuItem>
@@ -526,6 +560,11 @@ function Sidebar({
           {t("study.createHint")}
         </button>
       )}
+      <div className="flex-1" />
+      <button className={cx(item(false), "mt-4 text-[13px]")} onClick={onImport} title={t("share.importHint")}>
+        <FileArchive className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{t("share.import")}</span>
+      </button>
     </nav>
   );
 }
@@ -748,6 +787,9 @@ function InterviewRow({
           <MenuItem icon={<FolderInput />} onSelect={onMove}>
             {t("library.moveTo")}
           </MenuItem>
+          <MenuItem icon={<Share2 />} disabled={project.status !== "ready"} onSelect={() => void exportShare(t, { project })}>
+            {t("share.export")}
+          </MenuItem>
           <MenuSeparator />
           <MenuItem danger icon={<Trash2 />} onSelect={onDelete}>
             {t("common.delete")}
@@ -771,6 +813,7 @@ function ImportDialog({
   onKind,
   onClose,
   onFiles,
+  onArchive,
 }: {
   open: boolean;
   title: string;
@@ -778,6 +821,8 @@ function ImportDialog({
   onKind: (kind: RecordingKind) => void;
   onClose: () => void;
   onFiles: (paths: string[]) => void;
+  /** Import a ZIP file shared by a colleague instead. */
+  onArchive: () => void;
 }) {
   const t = useT();
   const browse = async () => {
@@ -835,6 +880,11 @@ function ImportDialog({
           <span className="mt-3 text-xs text-muted">{t("library.importFormats")}</span>
         </button>
         <p className="text-xs leading-relaxed text-muted">{t(kind === "conversation" ? "library.importTwoMics" : "library.importSeveral")}</p>
+        <button type="button" onClick={onArchive} className="flex items-center gap-2 self-start text-xs font-medium text-accent hover:underline">
+          <FileArchive className="size-3.5" />
+          {t("share.import")}
+          <span className="font-normal text-muted">{t("share.importHint")}</span>
+        </button>
       </div>
     </Dialog>
   );

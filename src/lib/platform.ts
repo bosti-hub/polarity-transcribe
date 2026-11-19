@@ -44,6 +44,12 @@ export async function pickFile(name: string, extensions: string[]): Promise<stri
 export interface DropHandlers {
   onHover?: (hovering: boolean) => void;
   onDrop: (paths: string[]) => void;
+  /** ZIP files (shared interviews or studies) dropped on the window. */
+  onArchives?: (paths: string[]) => void;
+}
+
+export function isArchivePath(path: string): boolean {
+  return path.toLowerCase().endsWith(".zip");
 }
 
 /** Listen for files dragged onto the window. Returns an unsubscribe function. */
@@ -60,6 +66,8 @@ export function onFileDrop(handlers: DropHandlers): () => void {
         handlers.onHover?.(false);
         const audio = p.paths.filter(isAudioPath);
         if (audio.length > 0) handlers.onDrop(audio);
+        const archives = p.paths.filter(isArchivePath);
+        if (archives.length > 0) handlers.onArchives?.(archives);
       }
     });
     if (cancelled) un();

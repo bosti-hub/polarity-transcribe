@@ -120,10 +120,13 @@ date.
 
 - Offline summaries with a local language model: possible, but opt-in; large download and
   methodologically sensitive.
-- Translation to English, recording inside the app, encryption per study, sharing a study as a
-  single file with a supervisor.
+- Translation to English, recording inside the app, encryption per study. (Sharing a study or
+  interview as one ZIP file came in 0.1.2.)
 - A second recogniser as a cross-check (Cohere Transcribe next to Whisper), tested in November
   2026: about 600 differences per hour of interview, most of them rewording. The useful ones
   (about 5 to 10 better words per hour) sit where a spell checker already finds a non-word.
   Not worth a 1.6 GB download and a second engine for now. See DEVLOG.md.
+- Qwen3-ASR 1.7B as the recogniser, looked into in November 2026 (not run): it recognises Dutch,
+  but its timestamp model has no Dutch, and in an independent read-speech test it did worse on
+  Dutch than Whisper turbo. See DEVLOG.md.
 - Not planned: cloud sync, accounts, meeting bots, dictation.

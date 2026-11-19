@@ -1,5 +1,5 @@
 // The in-app manual: short on purpose. One section per step of the workflow, a few lines each.
-// Shortcuts are written as "Mod+Q" etc. and shown in the platform's notation.
+// Shortcuts are written as "Mod+U" etc. and shown in the platform's notation.
 
 import { isMac, MOD, shortcutLabel } from "./keys";
 import type { Language } from "./types";
@@ -58,7 +58,7 @@ export function helpSections(lang: Language): HelpSection[] {
       {
         title: "5. Citaten",
         points: [
-          `Selecteer tekst en druk ${k("Mod+Q")}.`,
+          `Selecteer tekst en druk ${k("Mod+U")}.`,
           "Exporteren via het paneel Citaten of via de studie: genummerd, met per citaat een audiofragment (desgewenst met onherkenbare stem en weggepiepte namen).",
         ],
       },
@@ -68,6 +68,15 @@ export function helpSections(lang: Language): HelpSection[] {
           "Exporteren (rechtsboven): Word, tekst, MAXQDA, ATLAS.ti, NVivo, REFI-QDA (.qdpx) of ondertitels.",
           "Met Audio meeleveren komt het bijgesneden en gesynchroniseerde geluid ernaast; de tijden in het transcript lopen daar gelijk mee.",
           "Een hele studie in één keer: open de studie en kies Exporteren.",
+        ],
+      },
+      {
+        title: "7. Delen met een medestudent",
+        points: [
+          "Kies bij een interview of studie ⋯ > Delen als ZIP. Het bestand heet naar het interview of de studie, met datum en tijd erachter.",
+          "Er gaan transcript, opname, citaten en pseudonimiseringsregels mee. Stuur het alleen via een kanaal dat je instelling toestaat voor onderzoeksdata.",
+          "De ander kiest ZIP importeren (linksonder) of sleept het bestand in de app. Bestaat het interview of de studie daar al, dan komt er een kopie naast, met ‘geïmporteerd’ en de datum in de naam.",
+          "Opnieuw transcriberen kan alleen op de computer met de oorspronkelijke opnames.",
         ],
       },
       {
@@ -127,7 +136,7 @@ export function helpSections(lang: Language): HelpSection[] {
     {
       title: "5. Quotes",
       points: [
-        `Select text and press ${k("Mod+Q")}.`,
+        `Select text and press ${k("Mod+U")}.`,
         "Export from the Quotes panel or from the study: numbered, with an audio fragment per quote (optionally with an unrecognisable voice and bleeped names).",
       ],
     },
@@ -137,6 +146,15 @@ export function helpSections(lang: Language): HelpSection[] {
         "Export (top right): Word, text, MAXQDA, ATLAS.ti, NVivo, REFI-QDA (.qdpx) or subtitles.",
         "Include audio puts the trimmed and aligned sound next to it; the times in the transcript match it.",
         "A whole study at once: open the study and choose Export.",
+      ],
+    },
+    {
+      title: "7. Share with a fellow student",
+      points: [
+        "On an interview or study choose ⋯ > Share as ZIP. The file is named after the interview or study, followed by the date and time.",
+        "It holds the transcript, recording, quotes and pseudonymisation rules. Only send it through a channel your institution allows for research data.",
+        "The other person chooses Import ZIP (bottom left) or drops the file on the app. If the interview or study is already there, a copy is added next to it, with ‘imported’ and the date in its name.",
+        "Transcribing again is only possible on the computer with the original recordings.",
       ],
     },
     {
