@@ -190,6 +190,56 @@ pub struct Probe {
     /// Duration in seconds, if the container reports one.
     pub duration: Option<f64>,
     pub has_audio: bool,
+    /// The demuxer's format list, e.g. "mov,mp4,m4a,3gp,3g2,mj2".
+    pub container: String,
+    /// The first audio stream as FFmpeg describes it (the text after "Audio:"), e.g.
+    /// "aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)".
+    pub audio: Option<String>,
+}
+
+impl Probe {
+    /// Whether the first audio stream can be copied as it is into an MP4 file the webview plays:
+    /// AAC-LC, mono or stereo, from an MP4/MOV family file, at a modest bit rate (a copy of a
+    /// high-rate track would take more disk space than encoding it again).
+    pub fn audio_copyable_to_mp4(&self, max_kbps: u32) -> bool {
+        let Some(audio) = self.audio.as_deref() else { return false };
+        if !self.container.split(',').any(|f| f == "mov" || f == "mp4") {
+            return false;
+        }
+        let fields: Vec<&str> = audio.split(',').map(str::trim).collect();
+        let codec_ok = fields.first().is_some_and(|c| c.starts_with("aac (LC)"));
+        let layout_ok = fields.iter().any(|f| *f == "mono" || *f == "stereo");
+        let kbps = fields.iter().find_map(|f| f.split_whitespace().next().filter(|_| f.contains("kb/s"))?.parse::<u32>().ok());
+        codec_ok && layout_ok && kbps.is_some_and(|k| k <= max_kbps)
+    }
+}
+
+fn parse_probe(text: &str) -> Probe {
+    let mut p = Probe::default();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("Input #0, ") {
+            p.container = rest.split(", from").next().unwrap_or("").trim().trim_end_matches(',').to_string();
+        }
+        if let Some(rest) = line.strip_prefix("Duration:") {
+            let stamp = rest.trim().split(',').next().unwrap_or("").trim();
+            let parts: Vec<&str> = stamp.split(':').collect();
+            if parts.len() == 3 {
+                if let (Ok(h), Ok(m), Ok(s)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>(), parts[2].parse::<f64>()) {
+                    p.duration = Some(h * 3600.0 + m * 60.0 + s);
+                }
+            }
+        }
+        if line.starts_with("Stream #") {
+            if let Some((_, desc)) = line.split_once("Audio: ") {
+                p.has_audio = true;
+                if p.audio.is_none() {
+                    p.audio = Some(desc.trim().to_string());
+                }
+            }
+        }
+    }
+    p
 }
 
 pub fn probe(path: &Path) -> Result<Probe> {
@@ -204,24 +254,7 @@ pub fn probe(path: &Path) -> Result<Probe> {
         .stdin(Stdio::null())
         .output()
         .with_context(|| format!("could not start FFmpeg ({})", ffmpeg_path().display()))?;
-    let text = String::from_utf8_lossy(&out.stderr);
-    let mut p = Probe::default();
-    for line in text.lines() {
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("Duration:") {
-            let stamp = rest.trim().split(',').next().unwrap_or("").trim();
-            let parts: Vec<&str> = stamp.split(':').collect();
-            if parts.len() == 3 {
-                if let (Ok(h), Ok(m), Ok(s)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>(), parts[2].parse::<f64>()) {
-                    p.duration = Some(h * 3600.0 + m * 60.0 + s);
-                }
-            }
-        }
-        if line.starts_with("Stream #") && line.contains("Audio:") {
-            p.has_audio = true;
-        }
-    }
-    Ok(p)
+    Ok(parse_probe(&String::from_utf8_lossy(&out.stderr)))
 }
 
 /// Decode a (range of a) file fully into memory as mono f32.
@@ -233,4 +266,35 @@ pub fn decode_mono(path: &Path, opts: &DecodeOpts) -> Result<Vec<f32>> {
         true
     })?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MP4: &str = "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'a.mp4':
+  Duration: 00:03:41.33, start: 0.000000, bitrate: 7311 kb/s
+  Stream #0:0[0x1](und): Video: h264 (avc1 / 0x31637661), 3840x2160, 6987 kb/s
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s (default)
+  Stream #0:2[0x3](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, 5.1, fltp, 384 kb/s";
+
+    #[test]
+    fn the_banner_is_read() {
+        let p = parse_probe(MP4);
+        assert!((p.duration.unwrap() - 221.33).abs() < 1e-6);
+        assert!(p.has_audio);
+        assert_eq!(p.container, "mov,mp4,m4a,3gp,3g2,mj2");
+        assert!(p.audio.as_deref().unwrap().contains("stereo"), "the first audio stream counts");
+    }
+
+    #[test]
+    fn only_modest_aac_lc_in_mp4_is_copied() {
+        assert!(parse_probe(MP4).audio_copyable_to_mp4(192));
+        assert!(!parse_probe(&MP4.replace("128 kb/s", "320 kb/s")).audio_copyable_to_mp4(192));
+        assert!(!parse_probe(&MP4.replace("aac (LC)", "aac (HE-AAC)")).audio_copyable_to_mp4(192));
+        assert!(!parse_probe(&MP4.replace("stereo", "5.1")).audio_copyable_to_mp4(192));
+        assert!(!parse_probe(&MP4.replace("mov,mp4,m4a,3gp,3g2,mj2", "matroska,webm")).audio_copyable_to_mp4(192));
+        let wav = "Input #0, wav, from 'b.wav':\n  Duration: 02:21:44.74, bitrate: 1536 kb/s\n  Stream #0:0: Audio: pcm_f32le ([3][0][0][0] / 0x0003), 48000 Hz, mono, flt, 1536 kb/s";
+        assert!(!parse_probe(wav).audio_copyable_to_mp4(192));
+    }
 }

@@ -4,7 +4,7 @@ import { Button, Callout, cx, Dialog, Segmented, Select, Switch } from "@/compon
 import { useQuoteExport, type QuoteSource } from "@/components/QuoteExport";
 import { exportTranscript, HAS_LAYOUT, type ExportFormat, type ExportOptions } from "@/export";
 import type { PauseNotation } from "@/export/notation";
-import { api, errorMessage } from "@/lib/api";
+import { api, errorMessage, sourceFolderOf } from "@/lib/api";
 import { useT, type TKey } from "@/lib/i18n";
 import { exportContext } from "@/lib/interviews";
 import { pickSavePath } from "@/lib/platform";
@@ -247,7 +247,8 @@ export function ExportDialog({
         anonymize: anonymize ? rules : undefined,
         notation,
       });
-      const path = await pickSavePath(result.fileName, result.extension);
+      // Next to the recording: a lecture's notes usually belong with its video.
+      const path = await pickSavePath(result.fileName, result.extension, await sourceFolderOf(project));
       if (!path) return;
       await api.writeFile(path, result.bytes);
       if (withAudio) await api.exportRecording(project.id, `${path.replace(/\.[^.\\/]+$/, "")}.${audioFormat}`);

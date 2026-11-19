@@ -23,6 +23,8 @@ export interface Source {
   duration: number;
   /** 1, or 2 when left and right differ. */
   channels: number;
+  /** Gain the trimmer applies when playing `source{n}.m4a` (absent in older projects: 1). */
+  previewGain?: number;
   stereo: StereoVerdict;
   trimStart: number;
   trimEnd: number;

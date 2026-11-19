@@ -18,18 +18,20 @@ export async function pickAudioFiles(multiple: boolean): Promise<string[]> {
   return Array.isArray(picked) ? picked : [picked];
 }
 
-/** Ask where to save a file. Returns the chosen path or null. */
-export async function pickSavePath(defaultName: string, extension: string): Promise<string | null> {
+/** Ask where to save a file, starting in `folder` when given. Returns the chosen path or null. */
+export async function pickSavePath(defaultName: string, extension: string, folder?: string | null): Promise<string | null> {
   if (!isTauri) return `C:/mock/${defaultName}`;
   const { save } = await import("@tauri-apps/plugin-dialog");
-  return save({ defaultPath: defaultName, filters: [{ name: extension.toUpperCase(), extensions: [extension] }] });
+  const sep = folder?.includes("\\") ? "\\" : "/";
+  const defaultPath = folder ? `${folder}${sep}${defaultName}` : defaultName;
+  return save({ defaultPath, filters: [{ name: extension.toUpperCase(), extensions: [extension] }] });
 }
 
-/** Ask for a folder (for example to export a whole study into). */
-export async function pickFolder(): Promise<string | null> {
+/** Ask for a folder (for example to export a whole study into), starting in `start` when given. */
+export async function pickFolder(start?: string | null): Promise<string | null> {
   if (!isTauri) return "C:/mock/export";
   const { open } = await import("@tauri-apps/plugin-dialog");
-  const picked = await open({ directory: true, multiple: false });
+  const picked = await open({ directory: true, multiple: false, defaultPath: start ?? undefined });
   return typeof picked === "string" ? picked : null;
 }
 

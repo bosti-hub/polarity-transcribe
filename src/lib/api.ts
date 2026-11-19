@@ -87,6 +87,8 @@ export const api = {
   /** Write an exported file to a path the user picked in the save dialog. */
   writeFile: (path: string, bytes: Uint8Array) => invoke<void>("write_file", { path, bytes: Array.from(bytes) }),
   revealInFolder: (path: string) => invoke<void>("reveal_in_folder", { path }),
+  /** The folder a recording was imported from, or null when it is gone. */
+  sourceFolder: (path: string) => invoke<string | null>("source_folder", { path }),
   /** Cut a passage into its own audio file; `bleeps` are spans (transcript timeline) to beep out. */
   exportClip: (id: string, start: number, end: number, dest: string, voice: "tv" | "whisper" | null, bleeps: [number, number][] = []) =>
     invoke<void>("export_clip", { id, start, end, dest, voice, bleeps }),
@@ -105,6 +107,13 @@ export const api = {
   /** Import such a ZIP file; `copySuffix` is added to the name of a study or interview already here. */
   importArchive: (path: string, copySuffix: string) => invoke<ImportedArchive>("import_archive", { path, copySuffix }),
 };
+
+/** Where an interview's exports start: the folder of its first recording, while it is still there. */
+export async function sourceFolderOf(project: Pick<Project, "sources">): Promise<string | null> {
+  const path = project.sources.find((s) => s)?.originalPath;
+  if (!path || !isTauri) return null;
+  return api.sourceFolder(path).catch(() => null);
+}
 
 /** URL the webview can load for a file inside a project folder. */
 export function projectFileUrl(project: Pick<Project, "dir">, name: string, cacheKey?: number | string): string {

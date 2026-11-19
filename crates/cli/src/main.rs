@@ -184,7 +184,12 @@ fn main() -> Result<()> {
             }
             let t = Instant::now();
             let mut last = Instant::now();
+            let mut stage = None;
             let outcome = pipeline::run(&store, &p.id, &cfg, &cancel, &mut |pr| {
+                if stage != Some(pr.stage) {
+                    stage = Some(pr.stage);
+                    eprintln!("  [{:6.1}s] {:?} starts", t.elapsed().as_secs_f64(), pr.stage);
+                }
                 if last.elapsed().as_secs_f64() > 5.0 || pr.fraction >= 1.0 {
                     last = Instant::now();
                     eprintln!("  {:?} {:5.1}%  eta {:?}", pr.stage, pr.fraction * 100.0, pr.eta_seconds.map(|e| e.round()));

@@ -59,6 +59,7 @@ pub fn run() {
             commands::export_clip,
             commands::export_recording,
             commands::reveal_in_folder,
+            commands::source_folder,
             commands::open_project_page,
             diagnostics::system_info,
             share::export_archive,

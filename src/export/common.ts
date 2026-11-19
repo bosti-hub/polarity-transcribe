@@ -56,6 +56,12 @@ export function isoDate(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
+/** Whether turns carry the speaker's name: not when one person speaks throughout (a lecture). */
+export function labelsTurns(transcript: Transcript): boolean {
+  // The speaker list, not the turns: a clean export may drop every turn of one speaker.
+  return transcript.speakers.length > 1;
+}
+
 /** Date, duration, speakers and language, labelled in the UI language. */
 export function headerFields(transcript: Transcript, options: HeaderOptions): HeaderField[] {
   const labels = LABELS[options.uiLanguage];

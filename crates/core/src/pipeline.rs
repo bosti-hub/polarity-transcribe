@@ -10,7 +10,7 @@ use crate::assemble::{assemble, assign_speakers, drop_cross_talk, refine_times, 
 use crate::chunker::{self, Chunk, ChunkOpts};
 use crate::diarize::{self, Embedder, VoiceReport};
 use crate::ffmpeg::{self, Channel, ANALYSIS_RATE};
-use crate::fsutil::{pcm_len, pcm_read, pcm_write, read_json, write_atomic, write_json};
+use crate::fsutil::{pcm_read, pcm_write, read_json, write_atomic, write_json};
 use crate::lexicon::normalize;
 use crate::project::{files, Layout, Project, Status, Store, TrackSpec};
 use crate::spatial::{self, DelayReport};
@@ -212,6 +212,7 @@ impl Reporter<'_> {
 }
 
 /// Reads a source's cached PCM as one mono channel; positions outside the file are silent.
+#[derive(Clone)]
 struct SourceReader {
     left: PathBuf,
     right: Option<PathBuf>,
@@ -248,6 +249,119 @@ impl SourceReader {
             }
             _ => Self::read_one(&self.left, start, len),
         }
+    }
+}
+
+/// One track on the master timeline, `len` samples long (reads past the end are silent).
+///
+/// A track that is a plain stretch of a source is read straight from the import cache; only a
+/// second recording warped onto the master's clock is written out to the job folder.
+#[derive(Clone)]
+enum TrackAudio {
+    Source { reader: SourceReader, first: i64, len: usize },
+    File { path: PathBuf, len: usize },
+}
+
+impl TrackAudio {
+    fn source(dir: &Path, spec: &TrackSpec, channels: u8, len: usize) -> Self {
+        TrackAudio::Source { reader: SourceReader::new(dir, spec, channels), first: (spec.start * RATE).round() as i64, len }
+    }
+
+    fn read(&self, start: u64, n: usize) -> Result<Vec<f32>> {
+        let len = match self {
+            TrackAudio::Source { len, .. } | TrackAudio::File { len, .. } => *len,
+        };
+        let avail = (len as u64).saturating_sub(start).min(n as u64) as usize;
+        let mut out = match self {
+            TrackAudio::Source { reader, first, .. } => reader.read(first + start as i64, avail)?,
+            TrackAudio::File { path, .. } => pcm_read(path, start, avail)?,
+        };
+        out.resize(n, 0.0);
+        Ok(out)
+    }
+}
+
+/// Speech probabilities for a whole track, or `None` when cancelled.
+///
+/// The detector starts afresh every five minutes anyway (see [`Vad::probabilities`]), so those
+/// blocks run side by side on several cores with the same result.
+fn detect_voice(
+    audio: &TrackAudio,
+    n_samples: usize,
+    cfg: &JobConfig,
+    cancel: &AtomicBool,
+    progress: &mut dyn FnMut(f32),
+) -> Result<Option<Vec<f32>>> {
+    use std::sync::atomic::AtomicUsize;
+    const BLOCK: usize = VAD_HOP * 9_375; // five minutes, as in Vad::probabilities
+    let n_blocks = n_samples.div_ceil(BLOCK);
+    let workers = cfg.threads.clamp(1, 8).min(n_blocks.max(1));
+    let next = AtomicUsize::new(0);
+    let mut blocks: Vec<Option<Vec<f32>>> = vec![None; n_blocks];
+    std::thread::scope(|scope| -> Result<()> {
+        let (tx, rx) = std::sync::mpsc::channel::<Result<(usize, Vec<f32>)>>();
+        for _ in 0..workers {
+            let (tx, next) = (tx.clone(), &next);
+            scope.spawn(move || {
+                let mut vad = match Vad::new(&cfg.vad_model, 1) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let _ = tx.send(Err(e));
+                        return;
+                    }
+                };
+                while !cancel.load(Ordering::Relaxed) {
+                    let b = next.fetch_add(1, Ordering::Relaxed);
+                    if b >= n_blocks {
+                        return;
+                    }
+                    let pos = b * BLOCK;
+                    let r = audio.read(pos as u64, BLOCK.min(n_samples - pos)).and_then(|s| vad.probabilities(&s, |_| {}));
+                    let failed = r.is_err();
+                    // A closed channel means the job gave up on an error elsewhere.
+                    if tx.send(r.map(|p| (b, p))).is_err() || failed {
+                        return;
+                    }
+                }
+            });
+        }
+        drop(tx);
+        let mut done = 0;
+        for msg in rx {
+            let (b, p) = msg?;
+            blocks[b] = Some(p);
+            done += 1;
+            progress(done as f32 / n_blocks as f32);
+        }
+        Ok(())
+    })?;
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(None);
+    }
+    let mut out = Vec::with_capacity(n_samples.div_ceil(VAD_HOP));
+    for b in blocks {
+        out.extend(b.ok_or_else(|| anyhow::anyhow!("voice detection stopped early"))?);
+    }
+    out.truncate(n_samples.div_ceil(VAD_HOP));
+    Ok(Some(out))
+}
+
+/// The playback file being encoded on its own thread while the job goes on. Dropping it
+/// waits for the thread, which stops early when the job is cancelled.
+struct PlaybackRender(Option<std::thread::JoinHandle<Result<()>>>);
+
+impl PlaybackRender {
+    fn finish(&mut self) -> Result<()> {
+        match self.0.take() {
+            Some(h) => h.join().map_err(|_| anyhow::anyhow!("the playback encoder stopped unexpectedly"))?,
+            None => Ok(()),
+        }
+    }
+}
+
+impl Drop for PlaybackRender {
+    fn drop(&mut self) {
+        let _ = self.finish();
     }
 }
 
@@ -442,6 +556,8 @@ fn run_inner(
     let same = fs::read_to_string(&job_file).map(|s| s == fingerprint).unwrap_or(false);
     if !same {
         let _ = fs::remove_dir_all(&job);
+        // Made for other trims or recordings.
+        let _ = fs::remove_file(dir.join(PLAYBACK_FILE));
     }
     fs::create_dir_all(&job)?;
     if !same {
@@ -453,33 +569,12 @@ fn run_inner(
     let track_path = |k: usize| job.join(format!("track{}.pcm", k + 1));
     let channels_of = |spec: &TrackSpec| project.source(spec.source).map(|s| s.channels).unwrap_or(1);
 
-    let copy_track = |k: usize, spec: &TrackSpec| -> Result<()> {
-        let out = track_path(k);
-        if out.exists() {
-            return Ok(());
-        }
-        let reader = SourceReader::new(dir, spec, channels_of(spec));
-        let part = out.with_extension("pcm.part");
-        let mut w = BufWriter::new(File::create(&part)?);
-        let first = (spec.start * RATE).round() as i64;
-        let mut pos = 0usize;
-        while pos < n_samples {
-            let n = (16_000 * 30).min(n_samples - pos);
-            pcm_write(&mut w, &reader.read(first + pos as i64, n)?)?;
-            pos += n;
-        }
-        w.flush()?;
-        drop(w);
-        fs::rename(&part, &out)?;
-        Ok(())
-    };
-
-    copy_track(0, &master)?;
+    let mut audio: Vec<TrackAudio> = vec![TrackAudio::source(dir, &master, channels_of(&master), n_samples)];
     let mut sync_report = None;
     let mut sync_map = None;
     match layout {
         Layout::Single => {}
-        Layout::SplitStereo => copy_track(1, &tracks[1])?,
+        Layout::SplitStereo => audio.push(TrackAudio::source(dir, &tracks[1], channels_of(&tracks[1]), n_samples)),
         Layout::DualFile => {
             let second = tracks[1];
             let sync_file = job.join("sync.json");
@@ -516,6 +611,7 @@ fn run_inner(
                 drop(w);
                 fs::rename(&part, &out)?;
             }
+            audio.push(TrackAudio::File { path: track_path(1), len: n_samples });
             rep.at(Stage::Sync, 1.0);
             sync_report = Some(sf.report.clone());
             sync_map = Some((sf.map, second));
@@ -526,47 +622,32 @@ fn run_inner(
     }
     let n_tracks = tracks.len();
 
-    // Playback file for the editor: speaker 1 left, speaker 2 right.
+    // Playback file for the editor (speaker 1 left, speaker 2 right), encoded alongside the
+    // rest of the job: it is only needed once the transcript is there.
     let playback = dir.join(PLAYBACK_FILE);
+    let mut playback_render = PlaybackRender(None);
     if !playback.exists() {
-        render_playback(&(0..n_tracks).map(track_path).collect::<Vec<_>>(), &playback, n_samples)
-            .context("could not create the playback audio")?;
+        let (tracks, cancel) = (audio.clone(), cancel.clone());
+        playback_render.0 = Some(std::thread::spawn(move || render_playback(&tracks, &playback, n_samples, &cancel)));
     }
     rep.at(Stage::Prepare, 1.0);
 
     // ---- 2. Voice activity -----------------------------------------------------------
     let mut probs: Vec<Vec<f32>> = Vec::new();
-    {
-        let mut vad: Option<Vad> = None;
-        for k in 0..n_tracks {
-            let file = job.join(format!("vad{}.bin", k + 1));
-            let p = match read_f32(&file) {
-                Ok(p) if p.len() == n_samples.div_ceil(VAD_HOP) => p,
-                _ => {
-                    if vad.is_none() {
-                        vad = Some(Vad::new(&cfg.vad_model, cfg.threads.min(4))?);
-                    }
-                    let v = vad.as_mut().unwrap();
-                    const BLOCK: usize = VAD_HOP * 9_375; // five minutes
-                    let mut out = Vec::with_capacity(n_samples / VAD_HOP + 1);
-                    let mut pos = 0usize;
-                    while pos < n_samples {
-                        if cancelled() {
-                            return Ok(Outcome::Cancelled);
-                        }
-                        let n = BLOCK.min(n_samples - pos);
-                        let block = pcm_read(&track_path(k), pos as u64, n)?;
-                        out.extend(v.probabilities(&block, |_| {})?);
-                        pos += n;
-                        rep.at(Stage::Voice, (k as f32 + pos as f32 / n_samples as f32) / n_tracks as f32);
-                    }
-                    out.truncate(n_samples.div_ceil(VAD_HOP));
-                    write_f32(&file, &out)?;
-                    out
-                }
-            };
-            probs.push(p);
-        }
+    for (k, track) in audio.iter().enumerate() {
+        let file = job.join(format!("vad{}.bin", k + 1));
+        let p = match read_f32(&file) {
+            Ok(p) if p.len() == n_samples.div_ceil(VAD_HOP) => p,
+            _ => {
+                let Some(p) = detect_voice(track, n_samples, cfg, cancel, &mut |f| rep.at(Stage::Voice, (k as f32 + f) / n_tracks as f32))?
+                else {
+                    return Ok(Outcome::Cancelled);
+                };
+                write_f32(&file, &p)?;
+                p
+            }
+        };
+        probs.push(p);
     }
     rep.at(Stage::Voice, 1.0);
     let vad_spans: Vec<Vec<Span>> = probs.iter().map(|p| vad::segments(p, &SegmentOpts::default())).collect();
@@ -588,8 +669,8 @@ fn run_inner(
                 // Method::None with one span list: assembly gives every word to the one speaker.
             } else if n_tracks == 2 {
                 // First choice: each microphone clearly favours its own speaker.
-                let p1 = activity::frame_power(|s, n| pcm_read(&track_path(0), s, n), n_samples as u64)?;
-                let p2 = activity::frame_power(|s, n| pcm_read(&track_path(1), s, n), n_samples as u64)?;
+                let p1 = activity::frame_power(|s, n| audio[0].read(s, n), n_samples as u64)?;
+                let p2 = activity::frame_power(|s, n| audio[1].read(s, n), n_samples as u64)?;
                 let covered: Vec<bool> = match &sync_map {
                     Some((map, second)) => (0..p1.len())
                         .map(|f| {
@@ -609,8 +690,8 @@ fn run_inner(
                     result.bleed = Some(act.report);
                     let speech: Vec<bool> = (0..n_frames).map(|f| probs[0][f] >= 0.5 || probs[1][f] >= 0.5).collect();
                     let (spans, report) = spatial::attribute_by_delay(
-                        &mut |s, n| pcm_read(&track_path(0), s, n),
-                        &mut |s, n| pcm_read(&track_path(1), s, n),
+                        &mut |s, n| audio[0].read(s, n),
+                        &mut |s, n| audio[1].read(s, n),
                         n_samples,
                         &speech,
                         2,
@@ -649,7 +730,7 @@ fn run_inner(
                     let mut stopped = false;
                     let found = diarize::attribute_by_voice(
                         &mut embedder,
-                        &mut |s, n| pcm_read(&track_path(0), s, n),
+                        &mut |s, n| audio[0].read(s, n),
                         n_samples,
                         &vad_spans[0],
                         wanted,
@@ -721,7 +802,7 @@ fn run_inner(
         for piece in &chunk.pieces {
             let a = (piece.src.start * RATE).round() as u64;
             let b = (piece.src.end * RATE).round() as u64;
-            let mut s = pcm_read(&track_path(*speaker), a, (b - a) as usize)?;
+            let mut s = audio[*speaker].read(a, (b - a) as usize)?;
             if own_mic {
                 activity::duck_outside(&mut s, piece.src.start, &stream_spans[*speaker], ANALYSIS_RATE);
             }
@@ -926,6 +1007,10 @@ fn run_inner(
 
     // ---- 6. Assemble ----------------------------------------------------------------------
     rep.at(Stage::Finish, 0.0);
+    playback_render.finish().context("could not create the playback audio")?;
+    if cancelled() {
+        return Ok(Outcome::Cancelled);
+    }
     let asr_seconds: f64 = done.iter().flatten().map(|l| l.seconds).sum();
     let sparse = merge_sparse(
         done.iter()
@@ -1013,28 +1098,28 @@ fn tail_of(words: &[SpokenWord]) -> Option<String> {
 }
 
 /// Encode the aligned tracks into one AAC file (mono, or stereo with one speaker per side).
-fn render_playback(tracks: &[PathBuf], out: &Path, n_samples: usize) -> Result<()> {
+/// Stops without a file when `cancel` is set.
+fn render_playback(tracks: &[TrackAudio], out: &Path, n_samples: usize, cancel: &AtomicBool) -> Result<()> {
     use std::process::Stdio;
     let part = out.with_extension("part.m4a");
     let mut cmd = ffmpeg::ffmpeg_command();
     cmd.arg("-y");
     cmd.args(["-f", "s16le", "-ar", &ANALYSIS_RATE.to_string(), "-ac", &tracks.len().to_string(), "-i", "pipe:0"]);
-    cmd.args(["-c:a", "aac", "-b:a", if tracks.len() == 2 { "112k" } else { "64k" }]);
+    // The fast coder is about five times quicker than the default one at these settings.
+    cmd.args(["-c:a", "aac", "-aac_coder", "fast", "-b:a", if tracks.len() == 2 { "112k" } else { "64k" }]);
     cmd.args(["-movflags", "+faststart", "-f", "mp4"]).arg(&part);
     cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
     let mut child = cmd.spawn().context("could not start FFmpeg")?;
     let mut stdin = child.stdin.take().unwrap();
-    let write = (|| -> Result<()> {
+    let write = (|| -> Result<bool> {
         let mut pos = 0usize;
         let mut buf: Vec<u8> = Vec::new();
-        for t in tracks {
-            if pcm_len(t)? < n_samples as u64 {
-                bail!("audio cache {} is incomplete", t.display());
-            }
-        }
         while pos < n_samples {
+            if cancel.load(Ordering::Relaxed) {
+                return Ok(false);
+            }
             let n = (16_000 * 20).min(n_samples - pos);
-            let blocks: Vec<Vec<f32>> = tracks.iter().map(|t| pcm_read(t, pos as u64, n)).collect::<Result<_>>()?;
+            let blocks: Vec<Vec<f32>> = tracks.iter().map(|t| t.read(pos as u64, n)).collect::<Result<_>>()?;
             buf.clear();
             for i in 0..n {
                 for b in &blocks {
@@ -1044,11 +1129,24 @@ fn render_playback(tracks: &[PathBuf], out: &Path, n_samples: usize) -> Result<(
             stdin.write_all(&buf)?;
             pos += n;
         }
-        Ok(())
+        Ok(true)
     })();
     drop(stdin);
+    if !matches!(write, Ok(true)) {
+        let _ = child.kill();
+    }
     let output = child.wait_with_output()?;
-    write?;
+    let complete = match write {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = fs::remove_file(&part);
+            return Err(e);
+        }
+    };
+    if !complete {
+        let _ = fs::remove_file(&part);
+        return Ok(());
+    }
     if !output.status.success() {
         let _ = fs::remove_file(&part);
         bail!("FFmpeg failed: {}", String::from_utf8_lossy(&output.stderr).lines().last().unwrap_or(""));

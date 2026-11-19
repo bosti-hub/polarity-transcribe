@@ -696,6 +696,13 @@ fn bleep_filter(spans: &[(f64, f64)], start: f64, end: f64, loud: bool) -> Optio
     Some(format!("aeval=exprs='if({},{level}*sin(2*PI*1000*t),val(ch))'", parts.join("+")))
 }
 
+/// The folder a recording was imported from, if it is still there (exports go next to it).
+#[tauri::command]
+pub fn source_folder(path: String) -> Option<String> {
+    let parent = std::path::Path::new(&path).parent()?;
+    parent.is_dir().then(|| parent.to_string_lossy().into_owned())
+}
+
 /// Show a file or folder in the system file manager.
 #[tauri::command]
 pub fn reveal_in_folder(path: String) -> CmdResult<()> {

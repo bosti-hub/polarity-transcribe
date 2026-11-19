@@ -11,7 +11,7 @@ import {
 } from "docx";
 import type { Item, Paragraph, Transcript } from "../lib/types";
 import { formatClock, itemText, speakerName } from "../lib/transcript";
-import { headerFields, type RenderOptions } from "./common";
+import { headerFields, labelsTurns, type RenderOptions } from "./common";
 
 /** Named styles, so users can restyle a whole transcript in Word, NVivo or ATLAS.ti. */
 export const STYLE = {
@@ -65,11 +65,13 @@ function turnParagraph(p: Paragraph, index: number, transcript: Transcript, opti
     // The tab jumps to the hanging indent, so wrapped lines align with the speaker name.
     children.push(new TextRun({ text: String(index + 1), style: STYLE.turnNumber }), new TextRun({ text: "\t" }));
   }
-  children.push(new TextRun({ text: `${speakerName(transcript, p.speaker)}:`, style: STYLE.speaker }));
-  if (options.timestamps) {
-    children.push(new TextRun({ text: " " }), new TextRun({ text: `[${formatClock(p.start)}]`, style: STYLE.timestamp }));
-  }
-  children.push(new TextRun({ text: " " }), ...textRuns(p, transcript));
+  // With a single speaker (a lecture) the name would only repeat itself.
+  const lead: TextRun[] = [];
+  if (labelsTurns(transcript)) lead.push(new TextRun({ text: `${speakerName(transcript, p.speaker)}:`, style: STYLE.speaker }));
+  if (options.timestamps) lead.push(new TextRun({ text: `[${formatClock(p.start)}]`, style: STYLE.timestamp }));
+  lead.forEach((run, i) => children.push(...(i > 0 ? [new TextRun({ text: " " })] : []), run));
+  if (lead.length > 0) children.push(new TextRun({ text: " " }));
+  children.push(...textRuns(p, transcript));
   return new DocxParagraph({
     style: STYLE.transcript,
     children,

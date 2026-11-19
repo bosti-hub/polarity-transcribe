@@ -1,5 +1,6 @@
 import type { Paragraph, Transcript } from "../lib/types";
 import { itemText, speakerName } from "../lib/transcript";
+import { labelsTurns } from "./common";
 
 /** Upper bounds for a single subtitle cue. */
 export const MAX_CUE_WORDS = 12;
@@ -77,10 +78,11 @@ function srtTime(ms: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms % 1000, 3)}`;
 }
 
-/** SubRip subtitles: numbered cues; the speaker's name opens each turn. */
+/** SubRip subtitles: numbered cues; the speaker's name opens each turn (when there are several). */
 export function toSrt(transcript: Transcript): string {
+  const named = labelsTurns(transcript);
   return allCues(transcript)
-    .map((c, i) => `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${c.first ? `${c.speaker}: ` : ""}${c.text}\n`)
+    .map((c, i) => `${i + 1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${named && c.first ? `${c.speaker}: ` : ""}${c.text}\n`)
     .join("\n");
 }
 

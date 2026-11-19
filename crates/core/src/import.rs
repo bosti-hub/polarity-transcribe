@@ -1,8 +1,9 @@
 //! Bringing a recording into a project.
 //!
-//! One FFmpeg pass produces everything the rest of the app needs:
+//! After a quick pass that measures the level, one FFmpeg pass produces everything the rest of the app needs:
 //! - 16 kHz PCM caches per channel (analysis and recognition),
-//! - an AAC preview at the source quality for the trimmer,
+//! - a preview for the trimmer: the source's own AAC track when it can be copied, otherwise
+//!   AAC at the source quality,
 //! - waveform peaks,
 //! - the stereo verdict.
 
@@ -64,6 +65,9 @@ fn level_gain(bin_peaks: &mut [f32]) -> f32 {
     (0.5 / robust).clamp(1.0, 100.0)
 }
 
+/// Share of the progress bar for pass 1 (measuring the level).
+const PASS1: f32 = 0.3;
+
 /// Import `path` into slot `slot` of the project stored in `dir`.
 ///
 /// `progress` receives 0..1. Setting `cancel` aborts and removes partial files.
@@ -83,7 +87,6 @@ pub fn import_source(
     // Pass 1: measure the level. Many recorders (especially 32-bit float ones) produce very
     // quiet files; a fixed gain makes the caches, the preview and the waveform usable without
     // changing the balance between channels.
-    const PASS1: f32 = 0.3;
     let gain = {
         let mut bin_peaks: Vec<f32> = Vec::new();
         let (mut max, mut count) = (0f32, 0usize);
@@ -124,15 +127,106 @@ pub fn import_source(
         level_gain(&mut bin_peaks)
     };
 
+    // Pass 2: the caches, the waveform and the stereo verdict, plus the preview. AAC from a
+    // phone, a camera or a video call is copied into the preview as it is: no encoding, and
+    // the trimmer applies the level gain while playing. Anything else is encoded once.
+    let copy = probe.audio_copyable_to_mp4(MAX_COPY_KBPS);
+    // Speech in one channel sounds the same at half the bit rate, and takes half the space.
+    let mono = probe.audio.as_deref().is_some_and(|a| a.split(',').any(|f| f.trim() == "mono"));
+    let encode = Some(if mono { 64 } else { 128 });
+    let mut out = decode_caches(dir, slot, path, gain, total, if copy { None } else { encode }, cancel, &mut progress);
+    if copy && out.is_err() && !cancel.load(Ordering::Relaxed) {
+        // A track FFmpeg cannot copy after all: encode it.
+        out = decode_caches(dir, slot, path, gain, total, encode, cancel, &mut progress);
+    }
+    let out = out?;
+    let pcm_l = dir.join(format!("{}.part", files::pcm(slot, false)));
+    let pcm_r = dir.join(format!("{}.part", files::pcm(slot, true)));
+    let preview_part = dir.join(format!("source{}.part.m4a", slot + 1));
+
+    let finish = (|| -> Result<Source> {
+        let verdict = out.verdict;
+        let duration = out.frames as f64 / ANALYSIS_RATE as f64;
+        let stereo = verdict.kind != StereoKind::Mono;
+
+        // A mono recording keeps a single cache: the channel that carries the signal.
+        let keep_right_as_left = !stereo && verdict.mono_channel == Channel::Right;
+        let (src_l, peaks_main) = if keep_right_as_left { (&pcm_r, &out.peaks_r) } else { (&pcm_l, &out.peaks_l) };
+        fs::rename(src_l, dir.join(files::pcm(slot, false))).context("could not store the audio cache")?;
+        write_atomic(&dir.join(files::peaks(slot, false)), peaks_main)?;
+        if stereo {
+            fs::rename(&pcm_r, dir.join(files::pcm(slot, true)))?;
+            write_atomic(&dir.join(files::peaks(slot, true)), &out.peaks_r)?;
+        } else {
+            let _ = fs::remove_file(if keep_right_as_left { &pcm_l } else { &pcm_r });
+            let _ = fs::remove_file(dir.join(files::pcm(slot, true)));
+            let _ = fs::remove_file(dir.join(files::peaks(slot, true)));
+        }
+        fs::rename(&preview_part, dir.join(files::preview(slot))).context("could not store the preview audio")?;
+
+        Ok(Source {
+            file_name: path.file_name().and_then(|n| n.to_str()).unwrap_or("audio").to_string(),
+            original_path: path.to_string_lossy().into_owned(),
+            duration,
+            channels: if stereo { 2 } else { 1 },
+            gain,
+            preview_gain: if out.copied { gain } else { 1.0 },
+            stereo: verdict,
+            trim_start: 0.0,
+            trim_end: duration,
+            modified_ms: fs::metadata(path)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as u64),
+        })
+    })();
+
+    match finish {
+        Ok(src) => {
+            progress(1.0);
+            Ok(src)
+        }
+        Err(e) => {
+            for p in [&pcm_l, &pcm_r, &preview_part] {
+                let _ = fs::remove_file(p);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Copy an AAC track into the preview only up to this bit rate; above it, encoding a 128 kb/s
+/// preview takes less disk space.
+const MAX_COPY_KBPS: u32 = 192;
+
+/// What pass 2 leaves behind, next to the `.part` files it wrote.
+struct Decoded {
+    frames: u64,
+    verdict: crate::stereo::StereoVerdict,
+    peaks_l: Vec<u8>,
+    peaks_r: Vec<u8>,
+    /// The preview is a copy of the source's own track (without the gain).
+    copied: bool,
+}
+
+/// One FFmpeg run that writes both 16 kHz caches (with `gain` applied) and the preview as
+/// `.part` files: encoded at `preview_kbps`, or with `None` a copy of the source's track. On failure, nothing of it is left on disk.
+#[allow(clippy::too_many_arguments)]
+fn decode_caches(
+    dir: &Path,
+    slot: usize,
+    path: &Path,
+    gain: f32,
+    total: f64,
+    preview_kbps: Option<u32>,
+    cancel: &AtomicBool,
+    progress: &mut impl FnMut(f32),
+) -> Result<Decoded> {
     let part = |name: String| dir.join(format!("{name}.part"));
     let pcm_l = part(files::pcm(slot, false));
     let pcm_r = part(files::pcm(slot, true));
     let preview_part = dir.join(format!("source{}.part.m4a", slot + 1));
-    let cleanup = || {
-        for p in [&pcm_l, &pcm_r, &preview_part] {
-            let _ = fs::remove_file(p);
-        }
-    };
 
     let mut cmd = ffmpeg::ffmpeg_command();
     cmd.arg("-y").arg("-i").arg(path);
@@ -141,12 +235,20 @@ pub fn import_source(
     cmd.args(["-af", &format!("aformat=channel_layouts=stereo,volume={gain:.4}")]);
     cmd.args(["-ar", &ANALYSIS_RATE.to_string(), "-f", "f32le", "pipe:1"]);
     // Output 2: preview for the trimmer, mono or stereo as recorded.
-    cmd.args(["-map", "0:a:0", "-vn", "-sn", "-dn"]);
-    cmd.args([
-        "-af",
-        &format!("aformat=channel_layouts=mono|stereo:sample_rates=48000|44100|32000|24000|22050|16000,volume={gain:.4}"),
-    ]);
-    cmd.args(["-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-f", "mp4"]);
+    cmd.args(["-map", "0:a:0", "-vn", "-sn", "-dn", "-map_chapters", "-1"]);
+    let copy = preview_kbps.is_none();
+    if let Some(kbps) = preview_kbps {
+        cmd.args([
+            "-af",
+            &format!("aformat=channel_layouts=mono|stereo:sample_rates=48000|44100|32000|24000|22050|16000,volume={gain:.4}"),
+        ]);
+        // The fast coder is several times quicker than the default one and sounds the same
+        // for speech at this bit rate.
+        cmd.args(["-c:a", "aac", "-aac_coder", "fast", "-b:a", &format!("{kbps}k")]);
+    } else {
+        cmd.args(["-c:a", "copy"]);
+    }
+    cmd.args(["-movflags", "+faststart", "-f", "mp4"]);
     cmd.arg(&preview_part);
 
     let mut w_l = BufWriter::new(File::create(&pcm_l)?);
@@ -186,7 +288,7 @@ pub fn import_source(
         true
     });
 
-    let finish = (|| -> Result<Source> {
+    let done = (|| -> Result<Decoded> {
         let frames = result?;
         if let Some(e) = io_err {
             return Err(anyhow!(e).context("could not write the audio cache (disk full?)"));
@@ -199,53 +301,14 @@ pub fn import_source(
         drop((w_l, w_r));
         peaks_l.flush();
         peaks_r.flush();
-
-        let verdict = analyzer.finish();
-        let duration = frames as f64 / ANALYSIS_RATE as f64;
-        let stereo = verdict.kind != StereoKind::Mono;
-
-        // A mono recording keeps a single cache: the channel that carries the signal.
-        let keep_right_as_left = !stereo && verdict.mono_channel == Channel::Right;
-        let (src_l, peaks_main) = if keep_right_as_left { (&pcm_r, &peaks_r.out) } else { (&pcm_l, &peaks_l.out) };
-        fs::rename(src_l, dir.join(files::pcm(slot, false))).context("could not store the audio cache")?;
-        write_atomic(&dir.join(files::peaks(slot, false)), peaks_main)?;
-        if stereo {
-            fs::rename(&pcm_r, dir.join(files::pcm(slot, true)))?;
-            write_atomic(&dir.join(files::peaks(slot, true)), &peaks_r.out)?;
-        } else {
-            let _ = fs::remove_file(if keep_right_as_left { &pcm_l } else { &pcm_r });
-            let _ = fs::remove_file(dir.join(files::pcm(slot, true)));
-            let _ = fs::remove_file(dir.join(files::peaks(slot, true)));
-        }
-        fs::rename(&preview_part, dir.join(files::preview(slot))).context("could not store the preview audio")?;
-
-        Ok(Source {
-            file_name: path.file_name().and_then(|n| n.to_str()).unwrap_or("audio").to_string(),
-            original_path: path.to_string_lossy().into_owned(),
-            duration,
-            channels: if stereo { 2 } else { 1 },
-            gain,
-            stereo: verdict,
-            trim_start: 0.0,
-            trim_end: duration,
-            modified_ms: fs::metadata(path)
-                .and_then(|m| m.modified())
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as u64),
-        })
+        Ok(Decoded { frames, verdict: analyzer.finish(), peaks_l: peaks_l.out, peaks_r: peaks_r.out, copied: copy })
     })();
-
-    match finish {
-        Ok(src) => {
-            progress(1.0);
-            Ok(src)
-        }
-        Err(e) => {
-            cleanup();
-            Err(e)
+    if done.is_err() {
+        for p in [&pcm_l, &pcm_r, &preview_part] {
+            let _ = fs::remove_file(p);
         }
     }
+    done
 }
 
 /// Delete every cached file of a slot.

@@ -32,6 +32,8 @@ export interface QuoteSource {
   hasPseudonyms: boolean;
   /** The quotes, in order, with or without pseudonyms applied to their text. */
   build: (pseudonymise: boolean) => QuoteExportItem[];
+  /** Folder the folder picker starts in (an interview's: where its recording came from). */
+  startFolder?: () => Promise<string | null>;
 }
 
 type Format = "docx" | "csv" | "txt" | "md";
@@ -66,7 +68,7 @@ export function useQuoteExport(source: QuoteSource | undefined, onDone: () => vo
 
   const run = async () => {
     if (!source || source.count === 0) return;
-    const folder = await pickFolder();
+    const folder = await pickFolder(await source.startFolder?.());
     if (!folder) return;
     const sep = folder.includes("\\") ? "\\" : "/";
     const title = `${source.name} - ${t("quotes.title").toLowerCase()}`;

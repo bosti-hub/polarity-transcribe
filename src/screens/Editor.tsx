@@ -73,7 +73,7 @@ import { anonymizeText, mergeRules, pseudonymSpans, wholeWord } from "@/lib/anon
 import type { QuoteExportItem } from "@/components/QuoteExport";
 import { participantCodes, recordingOffset } from "@/lib/interviews";
 import { isModifierOnly, keyCombo } from "@/lib/keys";
-import { api, errorMessage, projectFileUrl } from "@/lib/api";
+import { api, errorMessage, projectFileUrl, sourceFolderOf } from "@/lib/api";
 import { exportShare } from "@/lib/share";
 import { DEFAULT_TAGS, useT } from "@/lib/i18n";
 import { useApp } from "@/lib/store";
@@ -908,8 +908,14 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
     [extras.quotes, previewRules, project.id, details, study, transcript],
   );
   const quoteSource = useMemo(
-    () => ({ name: details.name, count: extras.quotes?.length ?? 0, hasPseudonyms: previewRules.length > 0, build: buildQuoteExport }),
-    [details.name, extras.quotes, previewRules, buildQuoteExport],
+    () => ({
+      name: details.name,
+      count: extras.quotes?.length ?? 0,
+      hasPseudonyms: previewRules.length > 0,
+      build: buildQuoteExport,
+      startFolder: () => sourceFolderOf(project),
+    }),
+    [details.name, extras.quotes, previewRules, buildQuoteExport, project],
   );
 
   // ---------------------------------------------------------------- keyboard

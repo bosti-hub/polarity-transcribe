@@ -45,6 +45,10 @@ pub struct Source {
     /// Linear gain applied at import to bring quiet recordings to a usable level.
     #[serde(default = "one")]
     pub gain: f32,
+    /// Gain the trimmer applies when it plays the preview: `gain` when the preview is a copy
+    /// of the source's own track, 1 when the gain was encoded into it (always so before 0.1.3).
+    #[serde(default = "one")]
+    pub preview_gain: f32,
     pub stereo: StereoVerdict,
     pub trim_start: f64,
     pub trim_end: f64,

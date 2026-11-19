@@ -239,8 +239,12 @@ export function TrimPanel({ project, model }: { project: Project; model: Timelin
     return projectFileUrl(project, `source${tr.slot + 1}.m4a`, cacheKeys.current.get(k));
   });
   const urlKey = urls.join("|");
+  // A preview copied from the source's own track still needs the level gain; it is applied here.
+  const gainKey = tracks.map((tr) => project.sources[tr.slot]?.previewGain ?? 1).join("|");
 
   const audios = useRef<HTMLAudioElement[]>([]);
+  const gainNodes = useRef<(GainNode | null)[]>([]);
+  const audioCtx = useRef<AudioContext | null>(null);
   const raf = useRef(0);
   const [playing, setPlaying] = useState(false);
 
@@ -258,7 +262,18 @@ export function TrimPanel({ project, model }: { project: Project; model: Timelin
       if (url && url !== "null") a.src = url;
       return a;
     });
+    const gains = gainKey.split("|").map(Number);
+    const nodes = list.map((a, i) => {
+      const gain = gains[i] ?? 1;
+      if (!a.src || !(Math.abs(gain - 1) > 1e-3)) return null;
+      const ctx = (audioCtx.current ??= new AudioContext());
+      const node = ctx.createGain();
+      node.gain.value = gain;
+      ctx.createMediaElementSource(a).connect(node).connect(ctx.destination);
+      return node;
+    });
     audios.current = list;
+    gainNodes.current = nodes;
     stop();
     return () => {
       cancelAnimationFrame(raf.current);
@@ -268,13 +283,28 @@ export function TrimPanel({ project, model }: { project: Project; model: Timelin
         a.removeAttribute("src");
         a.load();
       }
+      nodes.forEach((n) => n?.disconnect());
       audios.current = [];
+      gainNodes.current = [];
     };
-  }, [urlKey, stop]);
+  }, [urlKey, gainKey, stop]);
 
   useEffect(() => {
-    audios.current.forEach((a, i) => (a.muted = !!muted[i]));
-  }, [muted, urlKey]);
+    return () => {
+      void audioCtx.current?.close();
+      audioCtx.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const gains = gainKey.split("|").map(Number);
+    audios.current.forEach((a, i) => {
+      a.muted = !!muted[i];
+      // An element routed through Web Audio is silenced at its gain as well.
+      const node = gainNodes.current[i];
+      if (node) node.gain.value = muted[i] ? 0 : (gains[i] ?? 1);
+    });
+  }, [muted, urlKey, gainKey]);
 
   /** Put every recording at the playhead (each on its own clock). */
   const alignAll = useCallback(() => {
@@ -309,6 +339,8 @@ export function TrimPanel({ project, model }: { project: Project; model: Timelin
     const f = model.fileTime(i, model.playhead);
     if (f >= trim.end - 0.05 || f < 0 || f > track.duration) model.setPlayhead(model.timelineTime(i, trim.start), true);
     alignAll();
+    // Created outside a click, the audio context starts suspended; Play is that click.
+    if (audioCtx.current?.state === "suspended") void audioCtx.current.resume();
     const started = audios.current.filter((a) => a.src).map((a) => a.play());
     Promise.all(started)
       .then(() => {

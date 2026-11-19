@@ -121,6 +121,22 @@ describe("txt", () => {
     );
   });
 
+  it("leaves out the name when one person speaks throughout (a lecture), but keeps the header", async () => {
+    const lecture: Transcript = {
+      ...nl,
+      speakers: [{ id: "S1", name: "Anna" }],
+      paragraphs: nl.paragraphs.map((p) => ({ ...p, speaker: "S1", items: p.items.filter((it) => it.k !== "b") })),
+    };
+    const p1 = P1_NL.replace(" [Bram: hm-hm]", "");
+    const out = await text(lecture, { format: "txt" });
+    expect(out).toContain("Sprekers: Anna\n");
+    expect(out).toContain(`\n\n[0:03] ${p1}\n\n[1:15] ${P2_TEXT}\n`);
+    expect(await text(lecture, { format: "txt", timestamps: false, numbering: "paragraph" })).toContain(`\n\n1. ${p1}\n\n2. ${P2_TEXT}\n`);
+    expect(await text(lecture, { format: "md" })).toContain(`\n\n*(0:03)* `);
+    expect(await text(lecture, { format: "md" })).not.toContain("**Anna**");
+    expect(await text(lecture, { format: "srt" })).not.toContain("Anna:");
+  });
+
   it("numbers turns, falls back from line numbering and omits timestamps", async () => {
     for (const numbering of ["paragraph", "line"] as const) {
       const out = await text(nl, { numbering, timestamps: false });
