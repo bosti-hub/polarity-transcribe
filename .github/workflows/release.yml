@@ -217,6 +217,8 @@ jobs:
           # files are the automatic updates; latest.json links them under these same names.
           assetNamePattern: Polarity-Transcribe-[version]-${{ matrix.asset }}[setup][ext]
           releaseBody: |
+            **Quick overview on YouTube:** https://youtu.be/h4KIzsuSZTc
+
             **Download**
             - Windows (64-bit): [Polarity-Transcribe-__VERSION__-Windows-setup.exe](https://github.com/bosti-hub/polarity-transcribe/releases/download/v__VERSION__/Polarity-Transcribe-__VERSION__-Windows-setup.exe)
             - Mac (Apple Silicon, M1 or newer): [Polarity-Transcribe-__VERSION__-Mac.dmg](https://github.com/bosti-hub/polarity-transcribe/releases/download/v__VERSION__/Polarity-Transcribe-__VERSION__-Mac.dmg)
