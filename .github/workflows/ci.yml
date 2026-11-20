@@ -58,10 +58,23 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # The cached whisper.cpp CMake build remembers the full path of the MSVC compiler. On a
+      # runner image with another MSVC version that path is gone and CMake fails ("is not a full
+      # path to an existing compiler tool"), so the MSVC version is part of the cache key.
+      - name: MSVC version (cache key)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $tools = (Get-Content (Join-Path $vs "VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt")).Trim()
+          "MSVC_TOOLS=$tools" >> $env:GITHUB_ENV
+          "MSVC tools: $tools"
+
       - uses: Swatinem/rust-cache@v2
         with:
-          # Separate caches per OS; the whisper.cpp CMake build is the expensive part.
-          key: ci
+          # Separate caches per OS (and MSVC version); the whisper.cpp CMake build is the
+          # expensive part.
+          key: ci-${{ env.MSVC_TOOLS }}
 
       - name: Typecheck frontend
         run: npm run typecheck

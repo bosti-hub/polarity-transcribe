@@ -38,14 +38,14 @@ jobs:
             target: x86_64-pc-windows-msvc
             features: vulkan
             bundles: nsis
-            # Shown in the file names: Polarity-Transcribe-0.1.2-Windows-setup.exe
+            # Shown in the file names: Polarity-Transcribe-0.1.3-Windows-setup.exe
             asset: Windows
           - os: macos-15 # Apple Silicon
             target: aarch64-apple-darwin
             features: metal
             # "app" produces the .app.tar.gz the in-app updater installs.
             bundles: app,dmg
-            # Polarity-Transcribe-0.1.2-Mac.dmg
+            # Polarity-Transcribe-0.1.3-Mac.dmg
             asset: Mac
     runs-on: ${{ matrix.os }}
 
@@ -112,9 +112,19 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # See ci.yml: a cached CMake build must not outlive the MSVC version it was made with.
+      - name: MSVC version (cache key)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $tools = (Get-Content (Join-Path $vs "VC\Auxiliary\Build\Microsoft.VCToolsVersion.default.txt")).Trim()
+          "MSVC_TOOLS=$tools" >> $env:GITHUB_ENV
+          "MSVC tools: $tools"
+
       - uses: Swatinem/rust-cache@v2
         with:
-          key: release-${{ matrix.target }}
+          key: release-${{ matrix.target }}-${{ env.MSVC_TOOLS }}
 
       # Vulkan SDK (headers, loader import library and glslc) is needed to compile the ggml
       # Vulkan backend. 1.4.363.1 is the version the Vulkan build was tested with locally.
