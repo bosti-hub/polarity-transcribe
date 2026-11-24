@@ -182,6 +182,14 @@ export function SettingsScreen() {
               {t("settings.openHelp")}
             </Button>
           </div>
+          <Row label={t("tutorial.showAtStart")} hint={t("tutorial.showAtStartHint")}>
+            <div className="flex items-center gap-3">
+              <Button size="sm" variant="ghost" onClick={() => useApp.getState().setTutorialOpen(true)}>
+                {t("tutorial.openLong")}
+              </Button>
+              <Switch checked={settings.showTutorial} onChange={(v) => update({ showTutorial: v })} label={t("tutorial.showAtStart")} />
+            </div>
+          </Row>
         </Section>
 
         <Section title={t("settings.about")}>

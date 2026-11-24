@@ -132,6 +132,17 @@ const nl = {
   help: {
     title: "Handleiding",
   },
+  tutorial: {
+    open: "Rondleiding",
+    openLong: "Rondleiding bekijken",
+    slide: "Slide {n} van {total}",
+    dontShow: "Niet meer tonen bij het starten",
+    findLater: "Je vindt de rondleiding linksonder in het startscherm.",
+    start: "Aan de slag",
+    helpHint: "Nieuw hier? Drie korte slides laten zien hoe je het snelst werkt: nakijken doe je direct in de app, gesynchroniseerd met de opname.",
+    showAtStart: "Rondleiding tonen bij het starten",
+    showAtStartHint: "Drie korte slides over nakijken, sprekers, citaten en exporteren.",
+  },
   quoteExport: {
     title: "Citaten exporteren",
     description: "Alle citaten genummerd in één map, met desgewenst per citaat een audiofragment.",
@@ -754,6 +765,17 @@ const en: Dict = {
   },
   help: {
     title: "Manual",
+  },
+  tutorial: {
+    open: "Quick tour",
+    openLong: "Take the quick tour",
+    slide: "Slide {n} of {total}",
+    dontShow: "Don't show at startup",
+    findLater: "You can find the tour at the bottom left of the start screen.",
+    start: "Get started",
+    helpHint: "New here? Three short slides show the quickest way to work: you check your transcript right in the app, synchronised with the recording.",
+    showAtStart: "Show the tour at startup",
+    showAtStartHint: "Three short slides on checking, speakers, quotes and exporting.",
   },
   quoteExport: {
     title: "Export quotes",

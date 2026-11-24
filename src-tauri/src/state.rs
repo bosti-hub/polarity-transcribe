@@ -32,6 +32,9 @@ pub struct Settings {
     pub key_forward: String,
     /// Underline spelling mistakes in the editor.
     pub spellcheck: bool,
+    /// Open the short tour each time the app starts. Missing in older settings files, so
+    /// people who updated see it once too.
+    pub show_tutorial: bool,
 }
 
 impl Default for Settings {
@@ -54,6 +57,7 @@ impl Default for Settings {
             key_back: String::new(),
             key_forward: String::new(),
             spellcheck: false,
+            show_tutorial: true,
         }
     }
 }

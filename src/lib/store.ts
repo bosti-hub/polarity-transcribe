@@ -36,6 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   keyBack: "",
   keyForward: "",
   spellcheck: false,
+  showTutorial: true,
 };
 
 interface AppState {
@@ -56,6 +57,8 @@ interface AppState {
   queue: string[];
   /** Background imports started from the library: fraction per interview id. */
   importing: Record<string, number>;
+  /** The tour (a few slides on how to work) is showing. */
+  tutorialOpen: boolean;
 
   init: () => Promise<void>;
   queueImports: (projectId: string, paths: string[]) => void;
@@ -75,6 +78,7 @@ interface AppState {
   putStudy: (study: Study) => void;
   /** Import recordings into interviews one after another, in the background. */
   importInBackground: (jobs: { projectId: string; path: string }[]) => void;
+  setTutorialOpen: (open: boolean) => void;
 }
 
 const LIBRARY_KEY = "pt.library";
@@ -106,6 +110,7 @@ export const useApp = create<AppState>((set, get) => ({
   studies: [],
   queue: [],
   importing: {},
+  tutorialOpen: false,
 
   queueImports: (projectId, paths) => set((s) => ({ pendingImports: { ...s.pendingImports, [projectId]: paths } })),
   takeImports: (projectId) => {
@@ -174,6 +179,7 @@ export const useApp = create<AppState>((set, get) => ({
     return id;
   },
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+  setTutorialOpen: (open) => set({ tutorialOpen: open }),
 
   showLibrary: (view) => {
     try {

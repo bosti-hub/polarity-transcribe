@@ -337,6 +337,8 @@ export interface Settings {
   keyForward: string;
   /** Underline spelling mistakes in the editor. */
   spellcheck: boolean;
+  /** Open the short tour (a few slides on how to work) each time the app starts. */
+  showTutorial: boolean;
 }
 
 /** What an imported ZIP file brought in. */

@@ -1,5 +1,6 @@
 import { AlertCircle, CheckCircle2, Info, X } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import { Tutorial } from "./components/Tutorial";
 import { cx, Spinner, TooltipProvider } from "./components/ui";
 import { errorMessage, events } from "./lib/api";
 import { useApp } from "./lib/store";
@@ -77,6 +78,16 @@ export function App() {
     document.documentElement.lang = lang;
   }, [lang]);
 
+  // The tour opens once per start, as soon as the app is ready (for a first start: right after
+  // the welcome screens), unless it was switched off.
+  const tourDecided = useRef(false);
+  useEffect(() => {
+    if (!ready || !onboarded || tourDecided.current) return;
+    tourDecided.current = true;
+    const { settings, setTutorialOpen } = useApp.getState();
+    if (settings.showTutorial) setTutorialOpen(true);
+  }, [ready, onboarded]);
+
   // The macOS menu bar: Help > Manual and the app menu's Settings.
   useEffect(() => {
     const un = events.menu((id) => {
@@ -134,6 +145,7 @@ export function App() {
   return (
     <TooltipProvider>
       <div className="h-full">{screen}</div>
+      {ready && onboarded && <Tutorial />}
       <Toasts />
     </TooltipProvider>
   );

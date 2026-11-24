@@ -3,6 +3,8 @@ test-audio/
 models/
 bench-out/
 *.pcm
+# Tutorial video project (scripts, demo audio, renders): kept locally only
+docs/tutorial/
 
 # Build output
 target/

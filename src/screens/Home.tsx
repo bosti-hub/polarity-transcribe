@@ -13,6 +13,7 @@ import {
   KeyRound,
   ScrollText,
   Layers,
+  Lightbulb,
   MessagesSquare,
   Mic,
   CircleHelp,
@@ -561,7 +562,11 @@ function Sidebar({
         </button>
       )}
       <div className="flex-1" />
-      <button className={cx(item(false), "mt-4 text-[13px]")} onClick={onImport} title={t("share.importHint")}>
+      <button className={cx(item(false), "mt-4 text-[13px]")} onClick={() => useApp.getState().setTutorialOpen(true)}>
+        <Lightbulb className="size-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{t("tutorial.open")}</span>
+      </button>
+      <button className={cx(item(false), "text-[13px]")} onClick={onImport} title={t("share.importHint")}>
         <FileArchive className="size-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate">{t("share.import")}</span>
       </button>

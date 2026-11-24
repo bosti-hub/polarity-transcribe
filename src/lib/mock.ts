@@ -34,6 +34,7 @@ let settings: Settings = {
   keyBack: "",
   keyForward: "",
   spellcheck: false,
+  showTutorial: true,
 };
 
 const models: ModelInfo[] = [

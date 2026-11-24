@@ -191,6 +191,25 @@ button:disabled {
 .anim-fade {
   animation: fade-in 0.14s ease-out;
 }
+/* The tour's drawings: a file dropping in, items appearing one after another. */
+.anim-drop {
+  animation: drop-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.anim-rise {
+  animation: rise-in 0.3s ease-out both;
+}
+@keyframes drop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-22px) scale(0.97);
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   * {
