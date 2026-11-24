@@ -91,6 +91,12 @@ recording with several conversations.
 - Choice per study: true verbatim, Dresing & Pehl, or a clean reading version, all rendered from
   the same transcript.
 - Overlapping speech marked automatically when two microphones were used.
+- Cleaner speaker turns with a microphone per speaker (done, November 2026, after 0.1.3). Words
+  one microphone only heard from the other speaker are removed, down to a single word, a slightly
+  different spelling or a garbled stray word. Short reactions ("I can imagine", "wat erg", "ja ja
+  ja ja") go inline, and so do listening sounds while the other person is talking. A short answer
+  to a question stays a turn of its own. An overlap note is only added while both are really
+  talking. Measured in DEVLOG.md.
 - Laughter and other non-verbal sounds (small offline sound classifier).
 - Split a recording that holds several conversations at the detected change of seats.
 
@@ -129,4 +135,7 @@ date.
 - Qwen3-ASR 1.7B as the recogniser, looked into in November 2026 (not run): it recognises Dutch,
   but its timestamp model has no Dutch, and in an independent read-speech test it did worse on
   Dutch than Whisper turbo. See DEVLOG.md.
+- Switching to voice recognition for the stretches of a two-microphone recording where the
+  microphones stop separating the voices (for example after the clip-on microphones were taken
+  off), measured in November 2026. Not built: trimming the recording does the same. See DEVLOG.md.
 - Not planned: cloud sync, accounts, meeting bots, dictation.

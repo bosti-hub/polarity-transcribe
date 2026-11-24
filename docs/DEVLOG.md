@@ -3,6 +3,71 @@
 Experiments that were tried and not (yet) adopted, with what was measured and why. Newest first.
 Decisions that did make it into the app are in [ROADMAP.md](ROADMAP.md).
 
+## November 2026: speaker turns with a microphone per speaker
+
+**Question.** On English interviews recorded with one clip-on microphone per speaker (synced to
+one stereo file), 0.1.3 often switched speaker too quickly. It made stray one-word turns, split
+sentences and added [overlapping] notes where an inline `[Name: mm-hmm]` would read better.
+
+**What was wrong.**
+- Deciding who talks when was fine: with 18 dB between the microphones, about 98% of the clear
+  single-speaker frames went to the right speaker.
+- The problem was the recogniser. It also writes out the other speaker's voice heard faintly on
+  each microphone. The duplicate filter only removed runs of two or more identical words, or one
+  word of six letters or more. Single short words ("or", "just", "Yeah.") and slightly different
+  spellings ("Correctly." / "currently?") survived.
+- When a microphone hears the other speaker almost as loud (7 dB in a second interview), the
+  recogniser also produced garbled words with no matching copy on the other track ("ability"
+  inside "responsibility to not watch").
+- A stray word glued to a real "mm-hmm" stopped it going inline. After an interruption, later
+  listening sounds were added to the wrong turn.
+- The overlap note measured against the end of the whole interrupted turn, so a short answer
+  followed by more speech from the other speaker counted as overlap.
+
+**Adopted (crates/core/src/assemble.rs, lexicon.rs, activity.rs).**
+- Duplicates are now also single words or close spellings. Both copies must start or end
+  within 0.25 s of each other: real bleed is simultaneous, an echo ("Zero." after "absolutely
+  zero") comes 0.4 s or more later.
+- On a tie between the speech spans, the level difference between the microphones decides.
+- With weak separation (under 10 dB), a duplicated passage goes to the track where it sits
+  inside a running utterance. A rule that stopped a run at a sentence end fixed one case and
+  broke several others (whole sentences of the participant moved to the interviewer), so it was
+  reverted.
+- A lone piece of up to three words that is not a reaction, and that lies on top of the other
+  speaker's words or in a pause in the middle of their sentence, is dropped as bleed. Where the
+  microphones separate well (10 dB or more) and the levels show the speaker's own voice, it
+  stays. Microphone levels are useless at 7 dB separation; timing works better.
+- The reaction lists are wider (Dutch and English phrases such as "dat kan ik me voorstellen",
+  "wat erg", "makes sense", "that's tough"). Hesitations no longer count as a unit, and a repeat
+  ("ja ja ja ja") counts once.
+- Listening sounds go inline in the turn of whoever holds the floor. A short answer with a real
+  word to a real question (not a tag such as "right?" or "toch?") stays a turn.
+
+**Measured** (pipeline replayed on kept job files, so recognition was identical):
+
+| | Paragraphs | Short stray turns | Overlap notes |
+|---|---|---|---|
+| Interview 1, 29 min, 18 dB | 252 -> 220 | 53 -> 40 | 51 -> 25 |
+| Interview 2, 66 min, 7 dB | 586 -> 165 | 275 -> 30 | 233 -> 12 |
+| Dutch fragment (delay method) | unchanged | unchanged | unchanged |
+
+- A Gemini transcript of interview 1 served as a rough check on who says what (its timestamps
+  drift: it ends at 35:05 on a 28:50 recording). On matched words the speaker agreed 99.4%
+  before and 99.6% after. The words removed were nearly all missing from Gemini too.
+- Known misses: a real echo spoken over the other speaker is sometimes dropped ("From the flow,
+  eh?"). A misheard "hmm" ("means?") stays.
+
+**Stereo against mono (not adopted).** Both interviews were transcribed as a mono mix (voices
+told apart by sound), left channel only and right channel only.
+- Interview 1: speaker agreement with Gemini was 99.6% (stereo), 98.6% (mono mix), 97.0%
+  (left) and 98.0% (right). Word recognition was about equal. Only stereo keeps reactions inline
+  (82 against 3 to 7).
+- Interview 2: stereo and mono agreed on 99.4% of words during the interview, but only 63% in
+  the chat afterwards. There the microphones no longer separated the voices (2.5 dB from about
+  60 minutes, probably taken off), and stereo was wrong.
+- A per-stretch fallback to voice recognition was considered and not built; trimming the
+  recording does the same.
+
 ## November 2026: Qwen3-ASR 1.7B (looked into, not run)
 
 **Question.** After the Cohere test below: would [Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR)

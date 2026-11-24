@@ -242,6 +242,65 @@ pub fn attribute(power: [&[f32]; 2], vad: [&[f32]; 2], covered: &[bool]) -> Acti
     Activity { spans, report }
 }
 
+/// The level ratio between the two microphones over time, kept after the speaker detection to
+/// tell, for a stretch of a few tenths of a second, whose voice was really sounding.
+pub struct Levels {
+    ratio_db: Vec<f32>,
+    /// How far the louder microphone is above its noise floor (0 in silence).
+    weight: Vec<f32>,
+    speaker1_db: f32,
+    speaker2_db: f32,
+}
+
+impl Levels {
+    /// `power` as for [`attribute`]; `report` is what [`attribute`] learned from the recording.
+    pub fn new(power: [&[f32]; 2], report: &BleedReport) -> Self {
+        let n = power[0].len().min(power[1].len());
+        let p1 = smooth(&power[0][..n], 2);
+        let p2 = smooth(&power[1][..n], 2);
+        let floor = |p: &[f32]| percentile(&mut p.to_vec(), 0.10).max(1e-10);
+        let (nf1, nf2) = (floor(&p1), floor(&p2));
+        let q = |p: f32, nf: f32| (p - nf).max(nf * 0.05);
+        let ratio_db = (0..n).map(|f| 10.0 * (q(p1[f], nf1) / q(p2[f], nf2)).log10()).collect();
+        let weight = (0..n).map(|f| (p1[f] / nf1).max(p2[f] / nf2) - 1.0).map(|w| w.max(0.0)).collect();
+        Levels { ratio_db, weight, speaker1_db: report.ratio_speaker1_db, speaker2_db: report.ratio_speaker2_db }
+    }
+
+    /// How far apart the two microphones are on their own speaker (dB). Below about 10 dB each
+    /// microphone hears the other speaker nearly as well, and [`Levels::owner`] says little.
+    pub fn separation(&self) -> f32 {
+        self.speaker1_db - self.speaker2_db
+    }
+
+    /// The speaker (0 or 1) whose voice the microphones show during `[start, end)`, or `None`
+    /// when both are sounding, nothing is, or the microphones cannot tell the two apart.
+    pub fn owner(&self, start: f64, end: f64) -> Option<usize> {
+        let separation = self.speaker1_db - self.speaker2_db;
+        if separation < 6.0 {
+            return None;
+        }
+        let a = ((start.max(0.0) / VAD_FRAME_SEC) as usize).min(self.ratio_db.len());
+        let b = ((end.max(start + 0.08) / VAD_FRAME_SEC).ceil() as usize).clamp(a, self.ratio_db.len());
+        let (mut sum, mut total) = (0f64, 0f64);
+        for f in a..b {
+            sum += self.ratio_db[f] as f64 * self.weight[f] as f64;
+            total += self.weight[f] as f64;
+        }
+        if total <= 0.0 {
+            return None;
+        }
+        let r = (sum / total) as f32;
+        let margin = separation / 3.0;
+        if r >= self.speaker1_db - margin {
+            Some(0)
+        } else if r <= self.speaker2_db + margin {
+            Some(1)
+        } else {
+            None
+        }
+    }
+}
+
 pub fn overlap_seconds(a: &[Span], b: &[Span]) -> f64 {
     let (mut i, mut j, mut acc) = (0, 0, 0.0);
     while i < a.len() && j < b.len() {
@@ -369,6 +428,20 @@ mod tests {
         let expected = 20.0 * 40.0 * VAD_FRAME_SEC;
         assert!(act.report.overlap_sec > 0.7 * expected, "{:?}", act.report);
         assert!(act.report.overlap_sec < 1.5 * expected, "{:?}", act.report);
+    }
+
+    #[test]
+    fn levels_tell_whose_voice_a_stretch_is() {
+        // 100 frames speaker 1 alone, 100 frames speaker 2 alone, 100 frames silence.
+        let script = [(100, true, false), (100, false, true), (100, false, false)];
+        let (p1, p2, v1, v2) = simulate(&script, 0.05, 0.04);
+        let covered = vec![true; p1.len()];
+        let act = attribute([&p1, &p2], [&v1, &v2], &covered);
+        let levels = Levels::new([&p1, &p2], &act.report);
+        let t = |f: usize| f as f64 * VAD_FRAME_SEC;
+        assert_eq!(levels.owner(t(40), t(50)), Some(0));
+        assert_eq!(levels.owner(t(140), t(150)), Some(1));
+        assert_eq!(levels.owner(t(240), t(250)), None);
     }
 
     #[test]

@@ -4,9 +4,9 @@
 //! and recognition appends one line per finished chunk. A job that is interrupted — app closed,
 //! laptop out of battery — therefore continues where it stopped the next time it is started.
 
-use crate::activity::{self, covered_seconds, BleedReport};
+use crate::activity::{self, covered_seconds, BleedReport, Levels};
 use crate::asr::{build_prompt, verbatim_primer, AsrModel, AsrParams, ChunkOutput};
-use crate::assemble::{assemble, assign_speakers, drop_cross_talk, refine_times, AssembleOpts, SpokenWord};
+use crate::assemble::{assemble, assign_speakers, drop_cross_talk, drop_stray_bleed, refine_times, AssembleOpts, SpokenWord};
 use crate::chunker::{self, Chunk, ChunkOpts};
 use crate::diarize::{self, Embedder, VoiceReport};
 use crate::ffmpeg::{self, Channel, ANALYSIS_RATE};
@@ -1038,9 +1038,20 @@ fn run_inner(
         refine_times(words, &stream_spans[k]);
     }
     let (words, speaker_count) = if own_mic {
+        // Where both speakers count as talking, the level difference between the microphones
+        // decides which one really heard a word that both recognised.
+        let levels = match &attribution.bleed {
+            Some(report) => {
+                let p1 = activity::frame_power(|s, n| audio[0].read(s, n), n_samples as u64)?;
+                let p2 = activity::frame_power(|s, n| audio[1].read(s, n), n_samples as u64)?;
+                Some(Levels::new([&p1, &p2], report))
+            }
+            None => None,
+        };
         let mut it = per_stream.into_iter();
         let pair = [it.next().unwrap(), it.next().unwrap()];
-        (drop_cross_talk(pair, &[stream_spans[0].clone(), stream_spans[1].clone()]), 2)
+        let words = drop_cross_talk(pair, &[stream_spans[0].clone(), stream_spans[1].clone()], levels.as_ref(), project.language);
+        (drop_stray_bleed(words, levels.as_ref(), project.language), 2)
     } else {
         let mut words = per_stream.pop().unwrap();
         if attribution.method != Method::None {

@@ -86,7 +86,8 @@ For a precise statement you can give to an ethics committee or supervisor, see
 - Waveform view for trimming the recording with in and out points.
 - Automatic synchronisation of two separate recordings, including compensation for clock drift
   between the two devices.
-- Microphone-bleed handling, so a sentence picked up by both microphones is not transcribed twice.
+- Microphone-bleed handling, so speech picked up by both microphones is not transcribed twice,
+  down to a single word.
 
 **Who said what**
 
@@ -104,7 +105,8 @@ The app chooses the most reliable method the recording allows, and tells you whi
 - Verbatim output that keeps filler words such as `[uhm]` and `[hmm]`. Switch **Verbatim
   transcript** off in the setup for a clean reading text (the default for a lecture).
 - Measured pause tags, for example `[stilte 3.5s]` in Dutch or `[silence 3.5s]` in English.
-- Short backchannels shown inline, for example `[Interviewer: hm-hm]`.
+- Short backchannels and reactions shown inline, for example `[Interviewer: hm-hm]` or
+  `[Interviewer: i can imagine]`. A short answer to a question stays a turn of its own.
 - With a microphone per speaker, speech that overlaps the other speaker is marked
   `[door elkaar]` / `[overlapping]`.
 - Resume after an interruption, and the computer is kept awake while a transcription runs.

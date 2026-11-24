@@ -1,9 +1,9 @@
 //! Turns recognised words into a readable verbatim transcript:
 //! speaker turns, inline backchannels, bracketed fillers and measured pauses.
 
-use crate::activity::covered_seconds;
+use crate::activity::{covered_seconds, Levels};
 use crate::asr::Language;
-use crate::lexicon::{is_backchannel, is_filler, normalize};
+use crate::lexicon::{is_backchannel, is_filler, is_hesitation, normalize};
 use crate::transcript::{default_speaker_name, ms, speaker_id, Item, Paragraph, Speaker, Transcript};
 use crate::vad::Span;
 
@@ -79,44 +79,126 @@ pub fn refine_times(words: &mut [SpokenWord], speech: &[Span]) {
     }
 }
 
+/// Both copies of a word heard by both microphones start within this many seconds of each
+/// other. Someone repeating the other's word ("Zero." after "absolutely zero") comes later.
+const SAME_SOUND: f64 = 0.25;
+
+fn edit_distance(a: &[char], b: &[char]) -> usize {
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut diag = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let next = (diag + usize::from(ca != cb)).min(row[j] + 1).min(row[j + 1] + 1);
+            diag = row[j + 1];
+            row[j + 1] = next;
+        }
+    }
+    row[b.len()]
+}
+
+/// Whether two recognitions are the same word, possibly heard a little differently on the
+/// other microphone ("girlfriend" / "girlfriends", "Belgian" / "Belgium", "correctly" /
+/// "currently", "mental" / "judgmental"). `None` when they are not.
+fn same_word(a: &str, b: &str) -> Option<bool> {
+    let (a, b) = (normalize(a), normalize(b));
+    if a.is_empty() || b.is_empty() {
+        return None;
+    }
+    if a == b {
+        return Some(true);
+    }
+    let (ca, cb): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let (short, long) = (ca.len().min(cb.len()), ca.len().max(cb.len()));
+    if short < 4 {
+        return None;
+    }
+    let affix = a.starts_with(&b) || b.starts_with(&a) || a.ends_with(&b) || b.ends_with(&a);
+    (affix || edit_distance(&ca, &cb) as f64 <= 0.3 * long as f64).then_some(false)
+}
+
 /// Drop words that a microphone only picked up as bleed: the same words appear at the same
 /// time on the other speaker's track, and that speaker owns the passage.
-pub fn drop_cross_talk(words: [Vec<SpokenWord>; 2], spans: &[Vec<Span>; 2]) -> Vec<SpokenWord> {
+///
+/// A run of two or more words, or one long word, is matched within a second. A single short
+/// word ("or", "just", "Yeah.") or a slightly different spelling only counts when both copies
+/// start at practically the same moment, so that someone echoing the other's word keeps it.
+/// Who owns the passage follows the speech spans; where those cannot decide, `levels` (the
+/// level difference between the microphones during the word) does.
+///
+/// When the microphones hardly separate the voices, the spans are not to be trusted near the
+/// other speaker's voice. Words that are not a listening sound then go to the track where they
+/// sit inside a running sentence ("…uncomfortable with my sexuality ever since I was younger")
+/// rather than to the one where they stand alone.
+pub fn drop_cross_talk(
+    words: [Vec<SpokenWord>; 2],
+    spans: &[Vec<Span>; 2],
+    levels: Option<&Levels>,
+    lang: Language,
+) -> Vec<SpokenWord> {
+    let weak_mics = levels.is_some_and(|l| l.separation() < 10.0);
+    // How many sides of words[from..to] continue the speaker's own speech (as one utterance in `assemble`).
+    let context = |w: &[SpokenWord], from: usize, to: usize| -> u8 {
+        let before = from > 0 && w[from].start - w[from - 1].end <= 1.0;
+        let after = to < w.len() && w[to].start - w[to - 1].end <= 1.0;
+        u8::from(before) + u8::from(after)
+    };
     let [a, b] = words;
     let mut keep_a = vec![true; a.len()];
     let mut keep_b = vec![true; b.len()];
+    let mut paired_b = vec![false; b.len()];
     let mut j0 = 0usize;
     let mut i = 0usize;
     while i < a.len() {
         while j0 < b.len() && b[j0].end < a[i].start - 1.0 {
             j0 += 1;
         }
-        // Find a run of identical words starting at a[i] and some nearby b[j].
-        let mut best = (0usize, 0usize); // (j, run length)
+        // Find a run of matching words starting at a[i] and some nearby b[j].
+        let mut best = (0usize, 0usize, true); // (j, run length, all copies start together)
         let mut j = j0;
         while j < b.len() && b[j].start <= a[i].start + 1.0 {
-            let mut run = 0;
-            while i + run < a.len()
-                && j + run < b.len()
-                && normalize(&a[i + run].text) == normalize(&b[j + run].text)
-                && !normalize(&a[i + run].text).is_empty()
-                && (a[i + run].start - b[j + run].start).abs() < 1.0
-            {
+            let (mut run, mut together) = (0, true);
+            // A word already paired with one on the other track is not paired again.
+            while i + run < a.len() && j + run < b.len() && !paired_b[j + run] {
+                let (x, y) = (&a[i + run], &b[j + run]);
+                let dt = (x.start - y.start).abs();
+                // A partial recognition ("mental" for "judgmental") shares the end, not the start.
+                let same_time = dt.min((x.end - y.end).abs()) < SAME_SOUND;
+                match same_word(&x.text, &y.text) {
+                    Some(true) if dt < 1.0 => {}
+                    Some(false) if same_time => {}
+                    _ => break,
+                }
+                together &= same_time;
                 run += 1;
             }
             if run > best.1 {
-                best = (j, run);
+                best = (j, run, together);
             }
             j += 1;
         }
-        let (j, run) = best;
+        let (j, run, together) = best;
         let chars: usize = (0..run).map(|k| normalize(&a[i + k].text).chars().count()).sum();
-        if run >= 2 || (run == 1 && chars >= 6) {
+        if run >= 2 || (run == 1 && (chars >= 6 || together)) {
             let (t0, t1) = (a[i].start.min(b[j].start), a[i + run - 1].end.max(b[j + run - 1].end));
             let own_a = covered_seconds(&spans[0], t0, t1);
             let own_b = covered_seconds(&spans[1], t0, t1);
-            let drop_a = own_a < own_b;
+            // Both speakers count as talking here (a word right at a hand-over, or both at once):
+            // the microphones say whose voice it was.
+            let by_level = if (own_a - own_b).abs() < 0.05 { levels.and_then(|l| l.owner(t0, t1)) } else { None };
+            let texts: Vec<&str> = a[i..i + run].iter().map(|w| w.text.as_str()).collect();
+            let listening = is_backchannel(&texts, lang) && !texts.iter().all(|t| is_hesitation(t, lang));
+            let (ctx_a, ctx_b) = (context(&a, i, i + run), context(&b, j, j + run));
+            let drop_a = if weak_mics && !listening && ctx_a != ctx_b {
+                ctx_a < ctx_b
+            } else {
+                match by_level {
+                    Some(owner) => owner == 1,
+                    None => own_a < own_b,
+                }
+            };
             for k in 0..run {
+                paired_b[j + k] = true;
                 if drop_a {
                     keep_a[i + k] = false;
                 } else {
@@ -137,6 +219,52 @@ pub fn drop_cross_talk(words: [Vec<SpokenWord>; 2], spans: &[Vec<Span>; 2]) -> V
         .collect();
     out.sort_by(|x, y| x.start.total_cmp(&y.start));
     out
+}
+
+/// Drop a stray word or two that one microphone made out of the other speaker's voice, where
+/// the recogniser heard something else than the other microphone did ("ability" inside the
+/// other speaker's "responsibility to not watch"), so [`drop_cross_talk`] finds no twin.
+///
+/// Such a fragment is at most three words of one speaker, standing alone, that is not a
+/// listening sound, and that either falls on top of the other speaker's words or sits in a
+/// tiny pause in the middle of the other speaker's sentence. A short answer or an echo ("23.",
+/// "Zero.") comes after the other speaker has finished a sentence and stays. Where the
+/// microphones separate the voices well, a fragment the levels show to be the speaker's own
+/// voice stays as well.
+pub fn drop_stray_bleed(words: Vec<SpokenWord>, levels: Option<&Levels>, lang: Language) -> Vec<SpokenWord> {
+    const ALONE: f64 = 1.0; // the same gap that separates utterances in `assemble`
+    let end = |w: &SpokenWord| w.end.max(w.start + 0.08);
+    let mut drop = vec![false; words.len()];
+    for k in 0..2 {
+        let own: Vec<usize> = (0..words.len()).filter(|&i| words[i].speaker == k).collect();
+        let other: Vec<&SpokenWord> = words.iter().filter(|w| w.speaker != k).collect();
+        let mut a = 0;
+        while a < own.len() {
+            let mut b = a;
+            while b + 1 < own.len() && words[own[b + 1]].start - end(&words[own[b]]) <= ALONE {
+                b += 1;
+            }
+            let piece: Vec<&SpokenWord> = own[a..=b].iter().map(|&i| &words[i]).collect();
+            let (s, e) = (piece[0].start, end(piece[piece.len() - 1]));
+            let texts: Vec<&str> = piece.iter().map(|w| w.text.as_str()).collect();
+            if piece.len() <= 3 && e - s <= 1.0 && !is_backchannel(&texts, lang) {
+                let on_top: f64 = other.iter().map(|o| (end(o).min(e) - o.start.max(s)).max(0.0)).sum();
+                let before = other.iter().filter(|o| end(o) <= s + 0.05).last();
+                let after = other.iter().find(|o| o.start >= e - 0.05);
+                let mid_sentence = piece.len() <= 2
+                    && before.is_some_and(|o| s - end(o) <= 0.6 && !word_ends_sentence(o))
+                    && after.is_some_and(|o| o.start - e <= 0.6);
+                let own_voice = levels.filter(|l| l.separation() >= 10.0).and_then(|l| l.owner(s, e)) == Some(k);
+                if (on_top >= 0.8 * (e - s) || mid_sentence) && !own_voice {
+                    for &i in &own[a..=b] {
+                        drop[i] = true;
+                    }
+                }
+            }
+            a = b + 1;
+        }
+    }
+    words.into_iter().zip(drop).filter(|(_, d)| !d).map(|(w, _)| w).collect()
 }
 
 /// Give each word of a shared stream to the speaker who was talking at that moment.
@@ -383,6 +511,59 @@ struct Turn {
     items: Vec<Item>,
 }
 
+fn turn_end(t: &Turn) -> f64 {
+    t.items.iter().filter_map(|i| i.end()).fold(0.0, f64::max)
+}
+
+/// Put a listening sound into a turn at its place in time.
+fn insert_backchannel(items: &mut Vec<Item>, speaker: usize, words: &[SpokenWord]) {
+    let (Some(first), Some(last)) = (words.first(), words.last()) else { return };
+    let text = words
+        .iter()
+        .map(|w| w.text.replace(['[', ']'], "").trim_end_matches(['.', ',']).to_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let item = Item::Backchannel { sp: speaker_id(speaker), t: text, s: ms(first.start), e: ms(last.end) };
+    let at = items.iter().position(|i| i.start().is_some_and(|s| s > first.start)).unwrap_or(items.len());
+    items.insert(at, item);
+}
+
+/// Question tags ("…, right?", "…, toch?") ask for no real answer.
+const QUESTION_TAGS: &[&str] = &[
+    "right", "yeah", "yes", "no", "okay", "ok", "huh", "eh", "know", "true", "see", "hè", "he", "toch", "ja",
+    "nee", "oké", "niet", "joh", "zo",
+];
+
+/// `u` comes after a question of the speaker of `t` ("Klinkt dat goed voor jou?" "Prima."): a
+/// short answer is a turn of its own, not a listening sound. A mere "hm-hm" or "ah" is not.
+fn answers_question(t: &Turn, u: &Utterance, lang: Language) -> bool {
+    if u.words.iter().all(|w| is_filler(&w.text, lang)) {
+        return false;
+    }
+    let before = t.items.iter().filter(|i| i.start().is_some_and(|s| s < u.start())).max_by(|a, b| {
+        a.start().unwrap_or(0.0).total_cmp(&b.start().unwrap_or(0.0))
+    });
+    match before {
+        Some(Item::Word { t, e, .. }) => {
+            t.ends_with('?') && *e <= u.start() + 0.05 && !QUESTION_TAGS.contains(&normalize(t).as_str())
+        }
+        _ => false,
+    }
+}
+
+/// The rest of an interrupted turn is only a listening sound, said while `u` was talking.
+fn is_listening_tail(t: &Turn, u: &Utterance, lang: Language) -> bool {
+    let mut texts: Vec<&str> = Vec::new();
+    for item in &t.items {
+        match item {
+            Item::Word { t, .. } => texts.push(t),
+            _ => return false,
+        }
+    }
+    let (start, end) = (t.items.iter().filter_map(|i| i.start()).fold(f64::INFINITY, f64::min), turn_end(t));
+    end - start <= 2.0 && end <= u.end() + 0.05 && is_backchannel(&texts, lang)
+}
+
 fn word_item(w: &SpokenWord, lang: Language) -> Item {
     let filler = is_filler(&w.text, lang);
     Item::Word {
@@ -467,46 +648,61 @@ pub fn assemble(mut words: Vec<SpokenWord>, speech: &[Span], duration: f64, opts
     utterances.extend(open.into_iter().flatten());
     utterances.sort_by(|a, b| a.start().total_cmp(&b.start()));
 
-    // 2. Turns, with listening sounds folded into the main speaker's turn.
+    // 2. Turns, with listening sounds folded into the turn of whoever has the floor.
     let mut turns: Vec<Turn> = Vec::new();
     for (idx, u) in utterances.iter().enumerate() {
-        let Some(cur) = turns.last_mut() else {
+        if turns.is_empty() {
             turns.push(Turn { speaker: u.speaker, items: u.words.iter().map(|w| word_item(w, lang)).collect() });
             continue;
-        };
+        }
+        let texts: Vec<&str> = u.words.iter().map(|w| w.text.as_str()).collect();
+        let short = u.end() - u.start() <= 2.0 && is_backchannel(&texts, lang);
+        // Someone else keeps the floor if they are still talking, or resume right away. After an
+        // interruption the rest of the interrupted turn comes last, so the turn that holds the
+        // floor is not always the last one.
+        let floor = (turns.len().saturating_sub(3)..turns.len()).rev().find(|&k| {
+            let t = &turns[k];
+            t.speaker != u.speaker
+                && (turn_end(t) > u.start() + 0.05
+                    || utterances.get(idx + 1).is_some_and(|n| n.speaker == t.speaker && n.start() - u.end() <= 2.5))
+        });
+        if let Some(k) = floor.filter(|&k| short && !answers_question(&turns[k], u, lang)) {
+            insert_backchannel(&mut turns[k].items, u.speaker, &u.words);
+            continue;
+        }
+        let cur = turns.last_mut().unwrap();
         if cur.speaker == u.speaker {
             cur.items.extend(u.words.iter().map(|w| word_item(w, lang)));
             continue;
         }
-        let cur_end = cur.items.iter().filter_map(|i| i.end()).fold(0.0, f64::max);
-        let texts: Vec<&str> = u.words.iter().map(|w| w.text.as_str()).collect();
-        let short = u.end() - u.start() <= 2.0 && is_backchannel(&texts, lang);
-        // The main speaker keeps the floor if they are still talking, or resume right away.
-        let main_continues = cur_end > u.start() + 0.05
-            || utterances.get(idx + 1).is_some_and(|n| n.speaker == cur.speaker && n.start() - u.end() <= 2.5);
-        if short && main_continues {
-            let text = u
-                .words
-                .iter()
-                .map(|w| w.text.trim_end_matches(['.', ',']).to_lowercase())
-                .collect::<Vec<_>>()
-                .join(" ");
-            let item = Item::Backchannel { sp: speaker_id(u.speaker), t: text, s: ms(u.start()), e: ms(u.end()) };
-            let at = cur.items.iter().position(|i| i.start().is_some_and(|s| s > u.start())).unwrap_or(cur.items.len());
-            cur.items.insert(at, item);
-            continue;
-        }
+        // How long both talk at once: until the interrupted speaker stops or the other one is
+        // done. What the interrupted speaker only says after that is not overlap.
+        let together = turn_end(cur).min(u.end()) - u.start();
         // A real interruption: split the current turn where the other speaker comes in.
         let split = cur.items.iter().position(|i| i.start().is_some_and(|s| s >= u.start() + 0.05));
-        let tail = match split {
+        let mut tail = match split {
             Some(at) if at > 0 => Some(Turn { speaker: cur.speaker, items: cur.items.split_off(at) }),
             _ => None,
         };
         let mut items: Vec<Item> = Vec::with_capacity(u.words.len() + 1);
-        if opts.mark_overlap && cur_end - u.start() >= MIN_OVERLAP {
+        if opts.mark_overlap && together >= MIN_OVERLAP {
             items.push(overlap_note(lang, u.start()));
         }
         items.extend(u.words.iter().map(|w| word_item(w, lang)));
+        // What the interrupted speaker still said while the other one talked may be no more
+        // than a listening sound ("Yes?"): that goes inline as well.
+        if let Some(t) = tail.as_ref().filter(|t| is_listening_tail(t, u, lang)) {
+            let words: Vec<SpokenWord> = t
+                .items
+                .iter()
+                .filter_map(|i| match i {
+                    Item::Word { t, s, e, .. } => Some(SpokenWord { speaker: 0, text: t.clone(), start: *s, end: *e, prob: 1.0 }),
+                    _ => None,
+                })
+                .collect();
+            insert_backchannel(&mut items, t.speaker, &words);
+            tail = None;
+        }
         turns.push(Turn { speaker: u.speaker, items });
         if let Some(t) = tail {
             turns.push(t);
@@ -673,6 +869,94 @@ mod tests {
     }
 
     #[test]
+    fn listening_sounds_during_a_long_answer_stay_inline_after_an_interruption() {
+        // The interviewer's "Yes?" runs into the answer; later "hm-hm"s and "yeah" fall while the
+        // participant is still talking, and only then the next question comes.
+        let mut words = vec![w(1, "And", 0.0, 0.3), w(1, "how", 0.3, 0.6), w(1, "did", 0.6, 0.9), w(1, "that", 0.9, 1.2), w(1, "go?", 1.2, 1.6)];
+        words.push(w(1, "Yes?", 2.4, 2.6));
+        for i in 0..60 {
+            let t = 2.0 + i as f64 * 0.3;
+            words.push(w(0, if i == 59 { "it." } else { "word" }, t, t + 0.25));
+        }
+        words.push(w(1, "Hm-hm.", 8.0, 8.2));
+        words.push(w(1, "Hm-hm.", 14.0, 14.1));
+        words.push(w(1, "Yeah.", 19.5, 19.6));
+        for (i, t) in ["So", "you", "feel", "that?"].iter().enumerate() {
+            words.push(w(1, t, 21.5 + i as f64 * 0.3, 21.5 + i as f64 * 0.3 + 0.25));
+        }
+        let t = assemble(words, &[Span::new(0.0, 23.0)], 24.0, &AssembleOpts { language: Language::En, ..opts() });
+        let speakers: Vec<&str> = t.paragraphs.iter().map(|p| p.speaker.as_str()).collect();
+        assert_eq!(speakers, ["S2", "S1", "S2"]);
+        assert_eq!(text(&t.paragraphs[0]), "And how did that go?");
+        let inline: Vec<String> = t.paragraphs[1]
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Backchannel { t, .. } => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(inline, ["yes?", "hm-hm", "hm-hm", "yeah"]);
+        assert_eq!(text(&t.paragraphs[2]), "So you feel that?");
+    }
+
+    #[test]
+    fn a_short_reaction_goes_inline_too() {
+        let mut words = vec![];
+        for (i, t) in ["It", "was", "quite", "traumatic", "because", "it", "is", "big."].iter().enumerate() {
+            words.push(w(0, t, i as f64 * 0.4, i as f64 * 0.4 + 0.3));
+        }
+        words.push(w(1, "I", 1.7, 1.8));
+        words.push(w(1, "can", 1.8, 1.9));
+        words.push(w(1, "imagine.", 1.9, 2.3));
+        let t = assemble(words, &[Span::new(0.0, 3.2)], 4.0, &AssembleOpts { language: Language::En, ..opts() });
+        assert_eq!(t.paragraphs.len(), 1);
+        assert_eq!(text(&t.paragraphs[0]), "It was quite traumatic because [S2: i can imagine] it is big.");
+    }
+
+    #[test]
+    fn a_short_answer_to_a_question_stays_its_own_turn_even_when_the_asker_goes_on() {
+        let words = vec![
+            w(0, "Klinkt", 0.0, 0.3),
+            w(0, "dat", 0.3, 0.5),
+            w(0, "goed?", 0.5, 0.9),
+            w(1, "Prima.", 1.2, 1.5),
+            w(0, "Heb", 2.2, 2.4),
+            w(0, "je", 2.4, 2.5),
+            w(0, "geschreven?", 2.5, 3.0),
+        ];
+        let t = assemble(words, &[Span::new(0.0, 3.0)], 4.0, &opts());
+        let speakers: Vec<&str> = t.paragraphs.iter().map(|p| p.speaker.as_str()).collect();
+        assert_eq!(speakers, ["S1", "S2", "S1"]);
+
+        // Nobody talks at the same time here, so no overlap is marked either.
+        let words = vec![
+            w(0, "Right", 315.2, 315.4),
+            w(0, "now?", 315.4, 315.68),
+            w(1, "Yes.", 315.75, 315.85),
+            w(0, "Absolutely", 316.06, 316.4),
+            w(0, "zero.", 316.4, 316.58),
+        ];
+        let marked = AssembleOpts { language: Language::En, mark_overlap: true, ..opts() };
+        let t = assemble(words, &[Span::new(315.2, 316.6)], 320.0, &marked);
+        assert_eq!(t.paragraphs.iter().map(text).collect::<Vec<_>>(), ["Right now?", "Yes.", "Absolutely zero."]);
+
+        // A question tag asks for nothing: the "ja" stays inline.
+        let words = vec![
+            w(0, "Dat", 0.0, 0.3),
+            w(0, "was", 0.3, 0.5),
+            w(0, "zwaar,", 0.5, 0.8),
+            w(0, "toch?", 0.8, 1.0),
+            w(1, "Ja.", 1.2, 1.4),
+            w(0, "En", 2.0, 2.2),
+            w(0, "toen?", 2.2, 2.6),
+        ];
+        let t = assemble(words, &[Span::new(0.0, 2.6)], 3.0, &opts());
+        assert_eq!(t.paragraphs.len(), 1);
+        assert_eq!(text(&t.paragraphs[0]), "Dat was zwaar, toch? [S2: ja] En toen?");
+    }
+
+    #[test]
     fn a_short_answer_stays_its_own_turn() {
         let words = vec![
             w(0, "Klinkt", 0.0, 0.3),
@@ -723,9 +1007,117 @@ mod tests {
         let a = vec![w(0, "Dat", 1.0, 1.2), w(0, "is", 1.2, 1.3), w(0, "waar.", 1.3, 1.6)];
         let b = vec![w(1, "dat", 1.05, 1.2), w(1, "is", 1.2, 1.35), w(1, "waar", 1.35, 1.6), w(1, "Ja.", 2.0, 2.2)];
         let spans = [vec![Span::new(0.9, 1.7)], vec![Span::new(1.9, 2.3)]];
-        let out = drop_cross_talk([a, b], &spans);
+        let out = drop_cross_talk([a, b], &spans, None, Language::Nl);
         let who: Vec<(usize, &str)> = out.iter().map(|w| (w.speaker, w.text.as_str())).collect();
         assert_eq!(who, [(0, "Dat"), (0, "is"), (0, "waar."), (1, "Ja.")]);
+    }
+
+    #[test]
+    fn a_single_short_word_heard_by_both_microphones_is_kept_once() {
+        // The interviewer says "just tell me"; the participant's microphone, open for a
+        // "hm-hm", also recognised "Just" at the same moment.
+        let a = vec![w(0, "Hm-hm.", 73.3, 73.45), w(0, "Just", 73.47, 73.6)];
+        let b = vec![w(1, "just,", 73.49, 73.6), w(1, "tell", 73.7, 73.9), w(1, "me", 73.9, 74.0)];
+        let spans = [vec![Span::new(73.2, 73.5)], vec![Span::new(73.45, 75.0)]];
+        let out = drop_cross_talk([a, b], &spans, None, Language::Nl);
+        let who: Vec<(usize, &str)> = out.iter().map(|w| (w.speaker, w.text.as_str())).collect();
+        assert_eq!(who, [(0, "Hm-hm."), (1, "just,"), (1, "tell"), (1, "me")]);
+    }
+
+    #[test]
+    fn a_word_spelled_differently_on_the_other_microphone_is_the_same_word() {
+        let a = vec![w(0, "Correctly.", 313.64, 313.86)];
+        let b = vec![w(1, "life", 313.2, 313.5), w(1, "currently?", 313.66, 314.0)];
+        let spans = [vec![Span::new(313.7, 313.8)], vec![Span::new(312.0, 314.0)]];
+        let out = drop_cross_talk([a, b], &spans, None, Language::Nl);
+        let texts: Vec<&str> = out.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(texts, ["life", "currently?"]);
+
+        // Only the end of the word made it to the other microphone.
+        let a = vec![w(0, "really", 1009.03, 1009.35), w(0, "judgmental,", 1009.35, 1009.91)];
+        let b = vec![w(1, "mental.", 1009.7, 1009.94)];
+        let spans = [vec![Span::new(1008.5, 1010.0)], vec![Span::new(1009.8, 1010.2)]];
+        let out = drop_cross_talk([a, b], &spans, None, Language::Nl);
+        let texts: Vec<&str> = out.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(texts, ["really", "judgmental,"]);
+
+        assert_eq!(same_word("girlfriend", "girlfriends,"), Some(false));
+        assert_eq!(same_word("Belgian.", "Belgium."), Some(false));
+        assert_eq!(same_word("mental.", "judgmental,"), Some(false));
+        assert_eq!(same_word("the", "they"), None);
+        assert_eq!(same_word("place", "space"), None);
+    }
+
+    #[test]
+    fn stray_words_from_the_other_voice_are_dropped() {
+        let mut words = vec![];
+        // Speaker 0 talks on: "...I found porn on his phone, so that was also..."
+        for (i, t) in ["I", "found", "porn", "on", "his", "phone,", "so", "that", "was", "also"].iter().enumerate() {
+            let s = 345.0 + i as f64 * 0.25 + if i >= 6 { 0.2 } else { 0.0 };
+            words.push(w(0, t, s, s + 0.22));
+        }
+        // Speaker 1's microphone made "it" out of "his" and "porn." in the comma pause.
+        words.push(w(1, "it", 345.98, 346.2));
+        words.push(w(1, "porn.", 346.48, 346.6));
+        words.sort_by(|a, b| a.start.total_cmp(&b.start));
+        let out = drop_stray_bleed(words, None, Language::En);
+        assert!(out.iter().all(|w| w.speaker == 0), "{out:?}");
+    }
+
+    #[test]
+    fn short_answers_echoes_and_listening_sounds_are_not_stray_bleed() {
+        let words = vec![
+            w(1, "How", 162.0, 162.3),
+            w(1, "old", 162.3, 162.5),
+            w(1, "are", 162.5, 162.7),
+            w(1, "you?", 162.7, 163.07),
+            w(0, "23.", 163.41, 163.58),
+            w(1, "Twenty-three.", 164.03, 164.6),
+            w(0, "Absolutely", 315.8, 316.3),
+            w(0, "zero.", 316.4, 316.58),
+            w(1, "Zero.", 317.03, 317.34),
+            w(0, "Yeah.", 317.68, 317.9),
+            w(0, "I", 318.0, 318.1),
+            w(0, "stopped", 318.1, 318.5),
+            w(1, "Mm-hmm.", 318.2, 318.45),
+            w(0, "really", 318.5, 318.8),
+        ];
+        let n = words.len();
+        assert_eq!(drop_stray_bleed(words, None, Language::En).len(), n);
+    }
+
+    #[test]
+    fn with_weak_microphones_words_go_to_the_running_sentence() {
+        // 7 dB apart: the spans wrongly say speaker 1 talks during speaker 0's sentence.
+        let report = crate::activity::BleedReport {
+            ratio_speaker1_db: 3.5,
+            ratio_speaker2_db: -3.5,
+            separation_db: 7.0,
+            separable: true,
+            speaker1_sec: 0.0,
+            speaker2_sec: 0.0,
+            overlap_sec: 0.0,
+        };
+        let p = vec![1e-4f32; 20_000];
+        let levels = Levels::new([&p, &p], &report);
+        let mut a = vec![];
+        for (i, t) in ["with", "my", "sexuality", "ever", "since", "I", "was", "younger."].iter().enumerate() {
+            a.push(w(0, t, 318.86 + i as f64 * 0.4, 318.86 + i as f64 * 0.4 + 0.38));
+        }
+        let b = vec![w(1, "sexuality", 319.68, 320.06), w(1, "ever", 320.08, 320.46), w(1, "since", 320.48, 320.86)];
+        let spans = [vec![Span::new(318.8, 319.6), Span::new(320.9, 322.1)], vec![Span::new(319.5, 320.9)]];
+        let out = drop_cross_talk([a, b], &spans, Some(&levels), Language::En);
+        assert!(out.iter().all(|w| w.speaker == 0) && out.len() == 8, "{out:?}");
+    }
+
+    #[test]
+    fn an_echo_of_the_other_speakers_word_is_not_bleed() {
+        // "Absolutely zero." - "Zero." The interviewer repeats the word half a second later.
+        let a = vec![w(0, "Absolutely", 315.8, 316.3), w(0, "zero.", 316.44, 316.8)];
+        let b = vec![w(1, "Zero.", 317.03, 317.34)];
+        let spans = [vec![Span::new(315.7, 316.9)], vec![Span::new(317.0, 317.4)]];
+        let out = drop_cross_talk([a, b], &spans, None, Language::Nl);
+        assert_eq!(out.len(), 3);
     }
 
     #[test]
