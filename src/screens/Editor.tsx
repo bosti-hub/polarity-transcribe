@@ -629,7 +629,9 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
       const { state, view } = editor;
       const { from, to, empty } = state.selection;
       const box = contentRef.current;
-      if (empty || !box || !view.hasFocus() || state.doc.resolve(from).parent !== state.doc.resolve(to).parent || !selectionSpan(state)) {
+      // Typed words count too (a "hm hm" added while listening): they have no audio of their own,
+      // and assignWords gives them the time of the word before.
+      if (empty || !box || !view.hasFocus() || state.doc.resolve(from).parent !== state.doc.resolve(to).parent || !state.doc.textBetween(from, to).trim()) {
         setSaidByAt(null);
         return;
       }
@@ -946,6 +948,19 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
         done();
         player.skip(3);
         return;
+      }
+      // Text selected in the transcript stays visible after a button was pressed (play, 5 s back,
+      // repeat selection), but the key then goes to that button. Backspace/Delete still remove
+      // the selection the person sees, and the cursor goes back into the text.
+      if ((e.key === "Backspace" || e.key === "Delete") && !mod && !e.altKey && !inField && !overlay()) {
+        const ed = editorRef.current;
+        const dom = ed?.view.dom;
+        const shown = window.getSelection();
+        if (ed && dom && !dom.contains(target) && !ed.state.selection.empty && shown && !shown.isCollapsed && dom.contains(shown.anchorNode)) {
+          done();
+          ed.chain().focus().deleteSelection().run();
+          return;
+        }
       }
       if (mod && !e.shiftKey && (e.key.toLowerCase() === "f" || e.key.toLowerCase() === "h")) {
         done();
