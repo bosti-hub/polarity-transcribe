@@ -367,6 +367,17 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
 
   // Follow the audio: highlight the spoken word and keep it in view.
   const lastManualScroll = useRef(0);
+  /** A mouse button is down in the transcript (a click, double-click or drag-select is under way). */
+  const pointerDown = useRef(false);
+  useEffect(() => {
+    const up = () => (pointerDown.current = false);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    return () => {
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+    };
+  }, []);
   useEffect(() => {
     let current = -1;
     player.onTick = (time) => {
@@ -379,6 +390,11 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
       }
       const idx = rangeAt(ranges.current, time, Math.max(0, current));
       if (idx === current) return;
+      // Moving the highlight redraws that text. While someone is selecting, the editor may not
+      // have read the new selection from the page yet, and the redraw would wipe it (Backspace
+      // then deletes nothing). Wait until the button is up, and read the selection first.
+      if (pointerDown.current) return;
+      (ed.view as unknown as { domObserver?: { flush(): void } }).domObserver?.flush();
       current = idx;
       const r = idx >= 0 ? ranges.current[idx] : null;
       setHighlights({ active: r ? { from: r.from, to: r.to } : null });
@@ -1169,7 +1185,10 @@ function EditorScreen({ project, transcript, extras: initialExtras, report, at }
           ref={scrollRef}
           className={cx("transcript min-w-0 flex-1 overflow-y-auto bg-surface", clickPlays && "click-plays")}
           onWheel={() => (lastManualScroll.current = performance.now())}
-          onPointerDown={() => (lastManualScroll.current = performance.now())}
+          onPointerDown={() => {
+            lastManualScroll.current = performance.now();
+            pointerDown.current = true;
+          }}
         >
           <div ref={contentRef} className="relative mx-auto max-w-[860px] px-8">
             <EditorContent editor={editor} />
@@ -1513,7 +1532,7 @@ function PlayerBar({
 
       <Tooltip label={t("editor.speed")} shortcut="Alt+↑↓">
         <span>
-          <Select value={state.rate} onChange={(e) => player.setRate(Number(e.target.value))} aria-label={t("editor.speed")} className="tabular h-8 w-[88px]">
+          <Select value={state.rate} onChange={(e) => player.setRate(Number(e.target.value))} aria-label={t("editor.speed")} className="tabular h-8 w-auto pr-1.5">
             {speeds.map((s) => (
               <option key={s} value={s}>
                 {s.toFixed(2).replace(/0$/, "")}×
